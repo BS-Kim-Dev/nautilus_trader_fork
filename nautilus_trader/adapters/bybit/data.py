@@ -376,10 +376,13 @@ class BybitDataClient(LiveMarketDataClient):
         self._topic_bar_type.pop(topic, None)
         await ws_client.unsubscribe_klines(bybit_symbol.raw_symbol, interval_str)
 
-    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId:
-        bybit_symbol = BybitSymbol(symbol)
-        nautilus_instrument_id: InstrumentId = bybit_symbol.parse_as_nautilus()
-        return nautilus_instrument_id
+    def _get_cached_instrument_id(
+        self,
+        symbol: str,
+        product_type: BybitProductType,
+    ) -> InstrumentId:
+        bybit_symbol = BybitSymbol(f"{symbol}-{product_type.value.upper()}")
+        return bybit_symbol.to_instrument_id()
 
     async def _request(self, data_type: DataType, correlation_id: UUID4) -> None:
         if data_type.type == BybitTickerData:
@@ -595,9 +598,7 @@ class BybitDataClient(LiveMarketDataClient):
 
     def _handle_orderbook(self, product_type: BybitProductType, raw: bytes, topic: str) -> None:
         msg = self._decoder_ws_orderbook.decode(raw)
-        symbol = msg.data.s + f"-{product_type.value.upper()}"
-        instrument_id: InstrumentId = self._get_cached_instrument_id(symbol)
-
+        instrument_id = self._get_cached_instrument_id(msg.data.s, product_type)
         instrument = self._cache.instrument(instrument_id)
         if instrument is None:
             self._log.error(f"Cannot parse order book data: no instrument for {instrument_id}")
@@ -645,32 +646,43 @@ class BybitDataClient(LiveMarketDataClient):
 
         msg = decoder.decode(raw)
         try:
-            symbol = msg.data.symbol + f"-{product_type.value.upper()}"
-            instrument_id: InstrumentId = self._get_cached_instrument_id(symbol)
+            instrument_id = self._get_cached_instrument_id(msg.data.symbol, product_type)
+            instrument = self._cache.instrument(instrument_id)
+            if instrument is None:
+                self._log.error(f"Cannot parse trade data: no instrument for {instrument_id}")
+                return
+
             last_quote = self._last_quotes.get(instrument_id)
+
+            bid_price = None
+            ask_price = None
+            bid_size = None
+            ask_size = None
+
+            if last_quote is not None:
+                bid_price = last_quote.bid_price
+                ask_price = last_quote.ask_price
+                bid_size = last_quote.bid_size
+                ask_size = last_quote.ask_size
+
+            if msg.data.bid1Price is not None:
+                bid_price = Price(float(msg.data.bid1Price), instrument.price_precision)
+
+            if msg.data.ask1Price is not None:
+                ask_price = Price(float(msg.data.ask1Price), instrument.price_precision)
+
+            if msg.data.bid1Size is not None:
+                bid_size = Quantity(float(msg.data.bid1Size), instrument.size_precision)
+
+            if msg.data.ask1Size is not None:
+                ask_size = Quantity(float(msg.data.ask1Size), instrument.size_precision)
 
             quote = QuoteTick(
                 instrument_id=instrument_id,
-                bid_price=(
-                    Price.from_str(msg.data.bid1Price)
-                    if msg.data.bid1Price or last_quote is None
-                    else last_quote.bid_price
-                ),
-                ask_price=(
-                    Price.from_str(msg.data.ask1Price)
-                    if msg.data.ask1Price or last_quote is None
-                    else last_quote.ask_price
-                ),
-                bid_size=(
-                    Quantity.from_str(msg.data.bid1Size)
-                    if msg.data.bid1Size or last_quote is None
-                    else last_quote.bid_size
-                ),
-                ask_size=(
-                    Quantity.from_str(msg.data.ask1Size)
-                    if msg.data.ask1Size or last_quote is None
-                    else last_quote.ask_size
-                ),
+                bid_price=bid_price,
+                ask_price=ask_price,
+                bid_size=bid_size,
+                ask_size=ask_size,
                 ts_event=millis_to_nanos(msg.ts),
                 ts_init=self._clock.timestamp_ns(),
             )
@@ -684,11 +696,17 @@ class BybitDataClient(LiveMarketDataClient):
         msg = self._decoder_ws_trade.decode(raw)
         try:
             for data in msg.data:
-                symbol = data.s + f"-{product_type.value.upper()}"
-                instrument_id: InstrumentId = self._get_cached_instrument_id(symbol)
+                instrument_id = self._get_cached_instrument_id(data.s, product_type)
+                instrument = self._cache.instrument(instrument_id)
+                if instrument is None:
+                    self._log.error(f"Cannot parse trade data: no instrument for {instrument_id}")
+                    return
+
                 trade: TradeTick = data.parse_to_trade_tick(
                     instrument_id,
-                    self._clock.timestamp_ns(),
+                    price_precision=instrument.price_precision,
+                    size_precision=instrument.size_precision,
+                    ts_init=self._clock.timestamp_ns(),
                 )
                 self._handle_data(trade)
         except Exception as e:

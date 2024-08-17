@@ -13,7 +13,13 @@
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
 
+from nautilus_trader.accounting.accounts.base import Account
+from nautilus_trader.accounting.accounts.cash import CashAccount
+from nautilus_trader.accounting.accounts.margin import MarginAccount
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import CurrencyType
 from nautilus_trader.model.events import OrderAccepted
 from nautilus_trader.model.events import OrderCanceled
@@ -30,6 +36,7 @@ from nautilus_trader.model.events import OrderReleased
 from nautilus_trader.model.events import OrderSubmitted
 from nautilus_trader.model.events import OrderTriggered
 from nautilus_trader.model.events import OrderUpdated
+from nautilus_trader.model.events.account import AccountState
 from nautilus_trader.model.instruments import CryptoFuture
 from nautilus_trader.model.instruments import CryptoPerpetual
 from nautilus_trader.model.instruments import CurrencyPair
@@ -238,3 +245,94 @@ def transform_order_from_pyo3(order_pyo3):
         event_cython = transform_order_event_from_pyo3(event_pyo3)
         order_cython.apply(event_cython)
     return order_cython
+
+
+################################################################################
+# Account
+################################################################################
+def transform_account_state_cython_to_pyo3(
+    account_state: AccountState,
+) -> nautilus_pyo3.AccountState:
+    account_state_dict = AccountState.to_dict(account_state)
+    return nautilus_pyo3.AccountState.from_dict(account_state_dict)
+
+
+def transform_account_state_pyo3_to_cython(
+    account_state_pyo3: nautilus_pyo3.AccountState,
+) -> Account:
+    account_state_dict_pyo3 = account_state_pyo3.to_dict()
+    return AccountState.from_dict(account_state_dict_pyo3)
+
+
+def from_account_state_pyo3_to_account_cython(
+    account_state: nautilus_pyo3.AccountState,
+    calculate_account_state: bool,
+):
+    account_state_cython = transform_account_state_pyo3_to_cython(account_state)
+    if account_state.account_type == nautilus_pyo3.AccountType.CASH:
+        return CashAccount(account_state_cython, calculate_account_state)
+    elif account_state.account_type == nautilus_pyo3.AccountType.MARGIN:
+        return MarginAccount(account_state_cython, calculate_account_state)
+    else:
+        raise ValueError("Unsupported account type")
+
+
+def from_account_state_cython_to_account_pyo3(
+    account_state: AccountState,
+    calculate_account_state: bool,
+):
+    account_state_pyo3 = transform_account_state_cython_to_pyo3(account_state)
+    if account_state_pyo3.account_type == nautilus_pyo3.AccountType.CASH:
+        return nautilus_pyo3.CashAccount(account_state_pyo3, calculate_account_state)
+    elif account_state_pyo3.account_type == nautilus_pyo3.AccountType.MARGIN:
+        return nautilus_pyo3.MarginAccount(account_state_pyo3, calculate_account_state)
+    else:
+        raise ValueError("Unsupported account type")
+
+
+def transform_account_to_pyo3(account: Account):
+    events = account.events
+    if len(events) == 0:
+        raise ValueError("Missing events in account")
+    init_event = events.pop(0)
+    calculate_account_state = account.calculate_account_state
+    account_pyo3 = from_account_state_cython_to_account_pyo3(init_event, calculate_account_state)
+    for account_state_cython in events:
+        event_pyo3 = transform_account_state_cython_to_pyo3(account_state_cython)
+        account_pyo3.apply(event_pyo3)
+    return account_pyo3
+
+
+def transform_account_from_pyo3(account_pyo3):
+    events_pyo3 = account_pyo3.events
+    if len(events_pyo3) == 0:
+        raise ValueError("Missing events in account")
+    init_event = events_pyo3.pop(0)
+    calculate_account_state = account_pyo3.calculate_account_state
+    account = from_account_state_pyo3_to_account_cython(init_event, calculate_account_state)
+    for account_state_pyo3 in events_pyo3:
+        event = transform_account_state_pyo3_to_cython(account_state_pyo3)
+        account.apply(event)
+    return account
+
+
+################################################################################
+# Market data
+################################################################################
+def transform_trade_tick_to_pyo3(trade: TradeTick):
+    trade_dict = TradeTick.to_dict(trade)
+    return nautilus_pyo3.TradeTick.from_dict(trade_dict)
+
+
+def transform_trade_tick_from_pyo3(trade_pyo3):
+    return TradeTick.from_pyo3(trade_pyo3)
+
+
+def transform_quote_tick_to_pyo3(quote: QuoteTick):
+    quote_tick_dict = QuoteTick.to_dict(quote)
+    return nautilus_pyo3.QuoteTick.from_dict(quote_tick_dict)
+
+
+def transform_bar_to_pyo3(bar: Bar):
+    bar_dict = Bar.to_dict(bar)
+    return nautilus_pyo3.Bar.from_dict(bar_dict)

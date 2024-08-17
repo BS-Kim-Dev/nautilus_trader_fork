@@ -1,14 +1,102 @@
-# NautilusTrader 1.196.0 Beta
+# NautilusTrader 1.199.0 Beta
 
 Released on TBD (UTC).
 
 ### Enhancements
+- Added `LiveExecEngineConfig.generate_missing_orders` reconciliation config option to align internal and external position states
+- Added `LogLevel::TRACE` (only available in Rust for debug/development builds)
+- Added `Actor.subscribe_signal(...)` method and `Data.is_signal(...)` class method (#1853), thanks @faysou
+- Improved `BinanceExecutionClient` position report requests (can now filter by instrument and includes reporting for flat positions)
+- Improved `BybitExecutionClient` position report requests (can now filter by instrument and includes reporting for flat positions)
+- Improved `LiveExecutionEngine` reconciliation robustness and recovery when internal positions do not match external positions
+- Improved `@customdataclass` decorator constructor to allow more positional arguments, thanks @faysou
+- Refined error modeling and handling in Rust (#1849), thanks @twitu
+- Upgraded `datafusion` crate to v41.0.0
+- Upgraded `uvloop` to v0.20.0
+
+### Breaking Changes
+- Changed `VolumeWeightedAveragePrice` calculation formula to use each bars "typical" price (#1842), thanks @evgenii-prusov
+
+### Fixes
+- Fixed `Position` exception type on duplicate fill (should be `KeyError` like `Order`)
+- Fixed Bybit position report parsing when position is flat (`BybitPositionSide` now correctly handles the empty string)
+
+---
+
+# NautilusTrader 1.198.0 Beta
+
+Released on 9th August 2024 (UTC).
+
+### Enhancements
+- Added `@customdataclass` decorator to reduce need for boiler plate implementing custom data types (#1828), thanks @faysou
+- Added timeout for HTTP client in Rust (#1835), thanks @davidsblom
+- Added catalog conversion function of streamed data to backtest data (#1834), thanks @faysou
+- Upgraded Cython to v3.0.11
+
+### Breaking Changes
+None
+
+### Fixes
+- Fixed creation of `instrumend_id` folder when writing PyO3 bars in catalog (#1832), thanks @faysou
+- Fixed `StreamingFeatherWriter` handling of `include_types` option (#1833), thanks @faysou
+- Fixed `BybitExecutionClient` position reports error handling and logging
+- Fixed `BybitExecutionClient` order report handling to correctly process external orders
+
+---
+
+# NautilusTrader 1.197.0 Beta
+
+Released on 2nd August 2024 (UTC).
+
+### Enhancements
+- Added Databento Status schema support for loading and live trading
+- Added options on futures support for Interactive Brokers (#1795), thanks @rsmb7z
+- Added documentation for option greeks custom data example (#1788), thanks @faysou
+- Added `MarketStatusAction` enum (support Databento `status` schema)
+- Added `ignore_quote_tick_size_updates` config option for Interactive Brokers (#1799), thanks @sunlei
+- Implemented `MessageBus` v2 in Rust (#1786), thanks @twitu
+- Implemented `DataEngine` v2 in Rust (#1785), thanks @twitu
+- Implemented `FillModel` in Rust (#1801), thanks @filipmacek
+- Implemented `FixedFeeModel` in Rust (#1802), thanks @filipmacek
+- Implemented `MakerTakerFeeModel` in Rust (#1803), thanks @filipmacek
+- Implemented Postgres native enum mappings in Rust (#1797, #1806), thanks @filipmacek
+- Refactored order submission error handling for Interactive Brokers (#1783), thanks @rsmb7z
+- Improved live reconciliation robustness (will now generate inferred orders necessary to align external position state)
+- Improved tests for Interactive Brokers (#1776), thanks @mylesgamez
+- Upgraded `tokio` crate to v1.39.2
+- Upgraded `datafusion` crate to v40.0.0
+
+### Breaking Changes
+- Removed `VenueStatus` and all associated methods and schemas (redundant with `InstrumentStatus`)
+- Renamed `QuoteTick.extract_volume(...)` to `.extract_size(...)` (more accurate terminology)
+- Changed `InstrumentStatus` params (support Databento `status` schema)
+- Changed `InstrumentStatus` arrow schema
+- Changed `OrderBook` FFI API to take data by reference instead of by value
+
+### Fixes
+- Fixed rounding errors in accounting calculations for large values (using `decimal.Decimal` internally)
+- Fixed multi-currency account commission handling with multiple PnL currencies (#1805), thanks for reporting @dpmabo
+- Fixed `DataEngine` unsubscribing from order book deltas (#1814), thanks @davidsblom
+- Fixed `LiveExecutionEngine` handling of adapter client execution report causing `None` mass status (#1789), thanks for reporting @faysou
+- Fixed `InteractiveBrokersExecutionClient` handling of instruments not found when generating execution reports (#1789), thanks for reporting @faysou
+- Fixed Bybit parsing of trade and quote ticks for websocket messages (#1794), thanks @davidsblom
+
+---
+
+# NautilusTrader 1.196.0 Beta
+
+Released on 5th July 2024 (UTC).
+
+### Enhancements
 - Added `request_order_book_snapshot` method (#1745), thanks @graceyangfan
+- Added order book data validation for `BacktestNode` when a venue `book_type` is `L2_MBP` or `L3_MBO`
 - Added Bybit demo account support (set `is_demo` to True in configs)
 - Added Bybit stop order types (`STOP_MARKET`, `STOP_LIMIT`, `MARKET_IF_TOUCHED`, `LIMIT_IF_TOUCHED`, `TRAILING_STOP_MARKET`)
 - Added Binance venue option for adapter configurations (#1738), thanks @DevRoss
 - Added Betfair amend order quantity support (#1687 and #1751), thanks @imemo88 and @limx0
-- Added serial test group to Rust nextest runner for Postgres tests (#1753), thanks @filipmacek
+- Added Postgres tests serial test group for nextest runner (#1753), thanks @filipmacek
+- Added Postgres account persistence capability (#1768), thanks @filipmacek
+- Refactored `AccountAny` pattern in Rust (#1755), thanks @filipmacek
 - Changed `DatabentoLiveClient` to use new [snapshot on subscribe](https://databento.com/blog/live-MBO-snapshot) feature
 - Changed identifier generator time tag component to include seconds (affects new `ClientOrderId`, `OrderId` and `PositionId` generation)
 - Changed `<Arc<Mutex<bool>>` to `AtomicBool` in Rust `network` crate, thanks @NextThread and @twitu
@@ -29,20 +117,27 @@ Released on TBD (UTC).
 - Ported `RateOfChange` indicator to Rust (#1750), thanks @Pushkarm029
 - Ported `MovingAverageConvergenceDivergence` indicator to Rust (#1752), thanks @Pushkarm029
 - Ported `OnBalanceVolume` indicator to Rust (#1756), thanks @Pushkarm029
+- Ported `SpreadAnalyzer` indicator to Rust (#1762), thanks @Pushkarm029
+- Ported `KeltnerPosition` indicator to Rust (#1763), thanks @Pushkarm029
+- Ported `FuzzyCandlesticks` indicator to Rust (#1766), thanks @Pushkarm029
 
 ### Breaking Changes
 - Renamed `Actor.subscribe_order_book_snapshots` and `unsubscribe_order_book_snapshots` to `subscribe_order_book_at_interval` and `unsubscribe_order_book_at_interval` respectively (this clarifies the method behavior where the handler then receives `OrderBook` at a regular interval, distinct from a collection of deltas representing a snapshot)
 
 ### Fixes
 - Fixed `LIMIT` order fill behavior for `L2_MBP` and `L3_MBO` book types (was not honoring limit price as maker), thanks for reporting @dpmabo
+- Fixed `CashAccount` PnL calculations when opening a position with multiple fills, thanks @Otlk
 - Fixed msgspec encoding and decoding of `Environment` enum for `NautilusKernelConfig`
 - Fixed `OrderMatchingEngine` processing by book type for quotes and deltas (#1754), thanks @davidsblom
 - Fixed `DatabentoDataLoader.from_dbn_file` for `OrderBookDelta`s when `as_legacy_cython=False`
-- Fixed `DatabentoDataLoader` OHLCV bar schema loading (incorrectly accounting for display factor0, thanks for reporting @faysou
+- Fixed `DatabentoDataLoader` OHLCV bar schema loading (incorrectly accounting for display factor), thanks for reporting @faysou
 - Fixed `DatabentoDataLoader` multiplier and round lot size decoding, thanks for reporting @faysou
 - Fixed Binance order report generation `active_symbols` type miss matching (#1729), thanks @DevRoss
 - Fixed Binance trade data websocket schemas (Binance no longer publish `b` buyer and `a` seller order IDs)
+- Fixed `BinanceFuturesInstrumentProvider` parsing of min notional, thanks for the report @AnthonyVince
+- Fixed `BinanceSpotInstrumentProvider` parsing of min and max notional
 - Fixed Bybit order book deltas subscriptions for `INVERSE` product type
+- Fixed `Cache` documentation for `get` (was the same as `add`), thanks for reporting @faysou
 
 ---
 
@@ -219,7 +314,7 @@ Released on 22nd March 2024 (UTC).
 - Ported `VIDYA` indicator to Rust, thanks @Pushkarm029
 - Refactored `InteractiveBrokersEWrapper`, thanks @rsmb7z
 - Redact Redis passwords in strings and logs
-- Upgraded `redis` crate to 0.25.2 which bumps up TLS dependencies, and turned on `tls-rustls-webpki-roots` feature flag
+- Upgraded `redis` crate to v0.25.2 which bumps up TLS dependencies, and turned on `tls-rustls-webpki-roots` feature flag
 
 ### Breaking Changes
 None
@@ -695,7 +790,7 @@ Released on 31st July 2023 (UTC).
 - Added `USDP` (Pax Dollar) and `TUSD` (TrueUSD) stablecoins
 - Improved `OrderMatchingEngine` handling when no fills (an error is now logged)
 - Improved `Binance` live clients logging
-- Upgraded Cython to 3.0.0 stable
+- Upgraded Cython to v3.0.0 stable
 
 ### Breaking Changes
 - Moved `filter_unclaimed_external_orders` from `ExecEngineConfig` to `LiveExecEngineConfig`

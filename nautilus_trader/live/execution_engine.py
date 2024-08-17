@@ -15,6 +15,7 @@
 
 import asyncio
 import math
+import uuid
 from asyncio import Queue
 from decimal import Decimal
 from typing import Any, Final
@@ -38,6 +39,7 @@ from nautilus_trader.execution.reports import FillReport
 from nautilus_trader.execution.reports import OrderStatusReport
 from nautilus_trader.execution.reports import PositionStatusReport
 from nautilus_trader.model.enums import LiquiditySide
+from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import OrderStatus
 from nautilus_trader.model.enums import OrderType
 from nautilus_trader.model.enums import TimeInForce
@@ -53,10 +55,13 @@ from nautilus_trader.model.events import OrderInitialized
 from nautilus_trader.model.events import OrderRejected
 from nautilus_trader.model.events import OrderTriggered
 from nautilus_trader.model.events import OrderUpdated
+from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import ClientOrderId
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import PositionId
 from nautilus_trader.model.identifiers import StrategyId
 from nautilus_trader.model.identifiers import TradeId
+from nautilus_trader.model.identifiers import VenueOrderId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price
@@ -125,6 +130,7 @@ class LiveExecutionEngine(ExecutionEngine):
         self.reconciliation_lookback_mins: int = config.reconciliation_lookback_mins or 0
         self.filter_unclaimed_external_orders: bool = config.filter_unclaimed_external_orders
         self.filter_position_reports: bool = config.filter_position_reports
+        self.generate_missing_orders: bool = config.generate_missing_orders
         self.inflight_check_interval_ms: int = config.inflight_check_interval_ms
         self.inflight_check_threshold_ms: int = config.inflight_check_threshold_ms
         self._inflight_check_threshold_ns: int = millis_to_nanos(self.inflight_check_threshold_ms)
@@ -346,9 +352,9 @@ class LiveExecutionEngine(ExecutionEngine):
             self._inflight_check_task = None
 
         if self._kill:
-            return  # Avoids queuing redundant sentinel messages
+            return  # Avoids enqueuing unnecessary sentinel messages when termination already signaled
 
-        # This will stop the queues processing as soon as they see the sentinel message
+        # This will stop queue processing as soon as they 'see' the sentinel message
         self._enqueue_sentinel()
 
     async def _wait_for_inflight_check_task(self) -> None:
@@ -431,6 +437,12 @@ class LiveExecutionEngine(ExecutionEngine):
 
     # -- RECONCILIATION -------------------------------------------------------------------------------
 
+    def _log_reconciliation_result(self, value: ClientId | InstrumentId, result: bool) -> None:
+        if result:
+            self._log.info(f"Reconciliation for {value} succeeded", LogColor.GREEN)
+        else:
+            self._log.warning(f"Reconciliation for {value} failed")
+
     async def reconcile_state(self, timeout_secs: float = 10.0) -> bool:
         """
         Reconcile the internal execution state with all execution clients (external
@@ -471,14 +483,57 @@ class LiveExecutionEngine(ExecutionEngine):
 
         # Reconcile each mass status with the execution engine
         for mass_status in mass_status_all:
+            if mass_status is None:
+                self._log.warning(
+                    "No execution mass status available for reconciliation "
+                    "(likely due to an adapter client error when generating reports)",
+                )
+                continue
+
+            client_id = mass_status.client_id
+            venue = mass_status.venue
             result = self._reconcile_mass_status(mass_status)
+
+            if not result and self.filter_position_reports:
+                self._log_reconciliation_result(client_id, result)
+                results.append(result)
+                self._log.warning(
+                    "`filter_position_reports` enabled, skipping further reconciliation",
+                )
+                continue
+
+            client = self._clients[client_id]
+
+            # Check internal and external position reconciliation
+            report_tasks: list[asyncio.Task] = []
+            for position in self._cache.positions_open(venue):
+                instrument_id = position.instrument_id
+                if instrument_id in mass_status.position_reports:
+                    self._log.debug(f"Position {instrument_id} for {client_id} already reconciled")
+                    continue  # Already reconciled
+                self._log.info(f"{position} pending reconciliation")
+                report_tasks.append(client.generate_position_status_reports(instrument_id))
+
+            if report_tasks:
+                # Reconcile specific internal open positions
+                self._log.info(f"Awaiting {len(report_tasks)} position reports for {client_id}")
+                position_results: list[bool] = []
+                for task_result in await asyncio.gather(*report_tasks):
+                    for report in task_result:
+                        position_result = self._reconcile_position_report(report)
+                        self._log_reconciliation_result(report.instrument_id, position_result)
+                        position_results.append(position_result)
+
+                result = all(position_results)
+
+            self._log_reconciliation_result(client_id, result)
             results.append(result)
 
         return all(results)
 
     def reconcile_report(self, report: ExecutionReport) -> bool:
         """
-        Check the given execution report.
+        Reconcile the given execution report.
 
         Parameters
         ----------
@@ -536,10 +591,6 @@ class LiveExecutionEngine(ExecutionEngine):
         self._log.debug(f"[RECV][RPT] {mass_status}")
         self.report_count += 1
 
-        if mass_status is None:
-            self._log.error("Error reconciling mass status (was None)")
-            return False
-
         self._log.info(
             f"Reconciling ExecutionMassStatus for {mass_status.venue}",
             color=LogColor.BLUE,
@@ -550,8 +601,8 @@ class LiveExecutionEngine(ExecutionEngine):
         reconciled_trades: set[TradeId] = set()
 
         # Reconcile all reported orders
-        for venue_order_id, order_report in mass_status.order_reports().items():
-            trades = mass_status.fill_reports().get(venue_order_id, [])
+        for venue_order_id, order_report in mass_status.order_reports.items():
+            trades = mass_status.fill_reports.get(venue_order_id, [])
 
             # Check and handle duplicate client order IDs
             client_order_id = order_report.client_order_id
@@ -578,7 +629,7 @@ class LiveExecutionEngine(ExecutionEngine):
         if not self.filter_position_reports:
             position_reports: list[PositionStatusReport]
             # Reconcile all reported positions
-            for position_reports in mass_status.position_reports().values():
+            for position_reports in mass_status.position_reports.values():
                 for report in position_reports:
                     result = self._reconcile_position_report(report)
                     results.append(result)
@@ -591,7 +642,7 @@ class LiveExecutionEngine(ExecutionEngine):
 
         return all(results)
 
-    def _reconcile_order_report(  # noqa (too complex)
+    def _reconcile_order_report(  # noqa: C901 (too complex)
         self,
         report: OrderStatusReport,
         trades: list[FillReport],
@@ -619,7 +670,7 @@ class LiveExecutionEngine(ExecutionEngine):
         instrument: Instrument | None = self._cache.instrument(order.instrument_id)
         if instrument is None:
             self._log.error(
-                f"Cannot reconcile order {order.client_order_id}: "
+                f"Cannot reconcile order for {order.client_order_id!r}: "
                 f"instrument {order.instrument_id} not found",
             )
             return False  # Failed
@@ -694,21 +745,21 @@ class LiveExecutionEngine(ExecutionEngine):
         )
         if client_order_id is None:
             self._log.error(
-                f"Cannot reconcile FillReport: client order ID {client_order_id} not found",
+                f"Cannot reconcile FillReport: client order ID for {report.venue_order_id!r} not found",
             )
             return False  # Failed
 
         order: Order | None = self._cache.order(client_order_id)
         if order is None:
             self._log.error(
-                f"Cannot reconcile FillReport: no order for client order ID {client_order_id}",
+                f"Cannot reconcile FillReport: no order for {client_order_id!r}",
             )
             return False  # Failed
 
         instrument: Instrument | None = self._cache.instrument(order.instrument_id)
         if instrument is None:
             self._log.error(
-                f"Cannot reconcile order {order.client_order_id}: "
+                f"Cannot reconcile order for {order.client_order_id!r}: "
                 f"instrument {order.instrument_id} not found",
             )
             return False  # Failed
@@ -742,16 +793,22 @@ class LiveExecutionEngine(ExecutionEngine):
             return self._reconcile_position_report_netting(report)
 
     def _reconcile_position_report_hedging(self, report: PositionStatusReport) -> bool:
+        self._log.info(
+            f"Reconciling HEDGE position for {report.instrument_id}, venue_position_id={report.venue_position_id}",
+            LogColor.BLUE,
+        )
+
         position: Position | None = self._cache.position(report.venue_position_id)
         if position is None:
             self._log.error(
-                f"Cannot reconcile position: position ID {report.venue_position_id} not found",
+                f"Cannot reconcile position: {report.venue_position_id!r} not found",
             )
             return False  # Failed
+
         position_signed_decimal_qty: Decimal = position.signed_decimal_qty()
         if position_signed_decimal_qty != report.signed_decimal_qty:
             self._log.error(
-                f"Cannot reconcile {report.instrument_id} {report.venue_position_id}: position "
+                f"Cannot reconcile {report.instrument_id} {report.venue_position_id!r}: position "
                 f"net qty {position_signed_decimal_qty} != reported net qty {report.signed_decimal_qty},"
                 f"{report}",
             )
@@ -760,6 +817,15 @@ class LiveExecutionEngine(ExecutionEngine):
         return True  # Reconciled
 
     def _reconcile_position_report_netting(self, report: PositionStatusReport) -> bool:
+        self._log.info(f"Reconciling NET position for {report.instrument_id}", LogColor.BLUE)
+
+        instrument = self._cache.instrument(report.instrument_id)
+        if instrument is None:
+            self._log.error(
+                f"Cannot reconcile position for {report.instrument_id}: instrument not found",
+            )
+            return False  # Failed
+
         positions_open: list[Position] = self._cache.positions_open(
             venue=None,  # Faster query filtering
             instrument_id=report.instrument_id,
@@ -768,13 +834,45 @@ class LiveExecutionEngine(ExecutionEngine):
         position_signed_decimal_qty: Decimal = Decimal()
         for position in positions_open:
             position_signed_decimal_qty += position.signed_decimal_qty()
+
+        self._log.info(f"{report.signed_decimal_qty=}", LogColor.BLUE)
+        self._log.info(f"{position_signed_decimal_qty=}", LogColor.BLUE)
+
         if position_signed_decimal_qty != report.signed_decimal_qty:
-            self._log.error(
-                f"Cannot reconcile {report.instrument_id}: position "
-                f"net qty {position_signed_decimal_qty} != reported net qty {report.signed_decimal_qty}, "
-                f"{report}",
+            if not self.generate_missing_orders:
+                self._log.warning(
+                    f"Discrepancy for {report.instrument_id} position "
+                    "when `generate_missing_orders` disabled, skipping further reconciliation",
+                )
+                return False
+
+            diff = abs(position_signed_decimal_qty - report.signed_decimal_qty)
+            diff_quantity = Quantity(diff, instrument.size_precision)
+            self._log.info(f"{diff_quantity=}", LogColor.BLUE)
+
+            order_side = (
+                OrderSide.BUY
+                if report.signed_decimal_qty > position_signed_decimal_qty
+                else OrderSide.SELL
             )
-            return False  # Failed
+
+            now = self._clock.timestamp_ns()
+            diff_report = OrderStatusReport(
+                instrument_id=report.instrument_id,
+                account_id=report.account_id,
+                venue_order_id=VenueOrderId(str(uuid.uuid4())),
+                order_side=order_side,
+                order_type=OrderType.MARKET,
+                time_in_force=TimeInForce.DAY,
+                order_status=OrderStatus.FILLED,
+                quantity=diff_quantity,
+                filled_qty=diff_quantity,
+                report_id=UUID4(),
+                ts_accepted=now,
+                ts_last=now,
+                ts_init=now,
+            )
+            self._reconcile_order_report(diff_report, trades=[])  # Will infer trade
 
         return True  # Reconciled
 

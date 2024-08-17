@@ -18,7 +18,7 @@
 use std::{
     cmp::Ordering,
     ffi::c_char,
-    fmt::{Display, Formatter},
+    fmt::Display,
     num::NonZeroU64,
     sync::{
         atomic::{self, AtomicBool, AtomicU64},
@@ -27,8 +27,11 @@ use std::{
 };
 
 use nautilus_core::{
-    correctness::check_valid_string, datetime::floor_to_nearest_microsecond, nanos::UnixNanos,
-    time::get_atomic_clock_realtime, uuid::UUID4,
+    correctness::{check_valid_string, FAILED},
+    datetime::floor_to_nearest_microsecond,
+    nanos::UnixNanos,
+    time::get_atomic_clock_realtime,
+    uuid::UUID4,
 };
 #[cfg(feature = "python")]
 use pyo3::{types::PyCapsule, IntoPy, PyObject, Python};
@@ -36,7 +39,6 @@ use tokio::{
     sync::oneshot,
     time::{Duration, Instant},
 };
-use tracing::{debug, error, trace};
 use ustr::Ustr;
 
 use crate::{handlers::EventHandler, runtime::get_runtime};
@@ -75,7 +77,7 @@ impl TimeEvent {
 }
 
 impl Display for TimeEvent {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "TimeEvent(name={}, event_id={}, ts_event={}, ts_init={})",
@@ -139,7 +141,7 @@ impl TestTimer {
         start_time_ns: UnixNanos,
         stop_time_ns: Option<UnixNanos>,
     ) -> anyhow::Result<Self> {
-        check_valid_string(name, stringify!(name))?;
+        check_valid_string(name, stringify!(name)).expect(FAILED);
         // SAFETY: Guaranteed to be non-zero
         let interval_ns = NonZeroU64::new(std::cmp::max(interval_ns, 1)).unwrap();
 
@@ -243,11 +245,11 @@ impl LiveTimer {
         stop_time_ns: Option<UnixNanos>,
         callback: EventHandler,
     ) -> anyhow::Result<Self> {
-        check_valid_string(name, stringify!(name))?;
+        check_valid_string(name, stringify!(name)).expect(FAILED);
         // SAFETY: Guaranteed to be non-zero
         let interval_ns = NonZeroU64::new(std::cmp::max(interval_ns, 1)).unwrap();
 
-        debug!("Creating timer '{}'", name);
+        log::debug!("Creating timer '{}'", name);
         Ok(Self {
             name: Ustr::from(name),
             interval_ns,
@@ -325,7 +327,7 @@ impl LiveTimer {
                         }
                     },
                     _ = (&mut cancel_rx) => {
-                        trace!("Received timer cancel");
+                        tracing::trace!("Received timer cancel");
                         break; // Timer canceled
                     },
                 }
@@ -339,7 +341,7 @@ impl LiveTimer {
 
     /// Cancels the timer (the timer will not generate a final event).
     pub fn cancel(&mut self) -> anyhow::Result<()> {
-        debug!("Cancel timer '{}'", self.name);
+        log::debug!("Cancel timer '{}'", self.name);
         if !self.is_expired.load(atomic::Ordering::SeqCst) {
             if let Some(sender) = self.canceler.take() {
                 // Send cancellation signal
@@ -366,7 +368,7 @@ fn call_python_with_time_event(
 
         match handler.callback.call1(py, (capsule,)) {
             Ok(_) => {}
-            Err(e) => error!("Error on callback: {:?}", e),
+            Err(e) => tracing::error!("Error on callback: {:?}", e),
         };
     });
 }

@@ -19,6 +19,7 @@
 
 use pyo3::prelude::*;
 
+pub mod account;
 pub mod common;
 pub mod data;
 pub mod enums;
@@ -44,6 +45,7 @@ pub fn model(_: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<crate::data::deltas::OrderBookDeltas>()?;
     m.add_class::<crate::data::depth::OrderBookDepth10>()?;
     m.add_class::<crate::data::quote::QuoteTick>()?;
+    m.add_class::<crate::data::status::InstrumentStatus>()?;
     m.add_class::<crate::data::trade::TradeTick>()?;
     // Enums
     m.add_class::<crate::enums::AccountType>()?;
@@ -59,6 +61,7 @@ pub fn model(_: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<crate::enums::InstrumentCloseType>()?;
     m.add_class::<crate::enums::LiquiditySide>()?;
     m.add_class::<crate::enums::MarketStatus>()?;
+    m.add_class::<crate::enums::MarketStatusAction>()?;
     m.add_class::<crate::enums::OmsType>()?;
     m.add_class::<crate::enums::OptionKind>()?;
     m.add_class::<crate::enums::OrderSide>()?;
@@ -141,5 +144,16 @@ pub fn model(_: Python<'_>, m: &PyModule) -> PyResult<()> {
     // Events - account
     m.add_class::<crate::events::account::state::AccountState>()?;
     m.add_class::<crate::position::Position>()?;
+    // Account
+    m.add_class::<crate::accounts::cash::CashAccount>()?;
+    m.add_class::<crate::accounts::margin::MarginAccount>()?;
+    m.add_function(wrap_pyfunction!(
+        crate::python::account::transformer::cash_account_from_account_events,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::python::account::transformer::margin_account_from_account_events,
+        m
+    )?)?;
     Ok(())
 }

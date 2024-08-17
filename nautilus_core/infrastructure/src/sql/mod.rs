@@ -14,8 +14,15 @@
 // -------------------------------------------------------------------------------------------------
 
 // Be careful about ordering and foreign key constraints when deleting data.
-pub const NAUTILUS_TABLES: [&str; 5] =
-    ["general", "instrument", "order_event", "order", "currency"];
+pub const NAUTILUS_TABLES: [&str; 7] = [
+    "general",
+    "trade",
+    "instrument",
+    "account_event",
+    "order_event",
+    "order",
+    "currency",
+];
 
 pub mod cache_database;
 pub mod models;

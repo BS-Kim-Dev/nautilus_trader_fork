@@ -21,27 +21,29 @@
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use nautilus_core::nanos::UnixNanos;
 use nautilus_model::{
+    accounts::any::AccountAny,
+    data::{bar::Bar, quote::QuoteTick, trade::TradeTick},
     identifiers::{
         AccountId, ClientId, ClientOrderId, ComponentId, InstrumentId, PositionId, StrategyId,
         VenueOrderId,
     },
     instruments::{any::InstrumentAny, synthetic::SyntheticInstrument},
+    orderbook::book::OrderBook,
     orders::any::OrderAny,
     position::Position,
     types::currency::Currency,
 };
 use ustr::Ustr;
 
-use crate::interface::account::Account;
-
 pub trait CacheDatabaseAdapter {
     fn close(&mut self) -> anyhow::Result<()>;
 
     fn flush(&mut self) -> anyhow::Result<()>;
 
-    fn load(&mut self) -> anyhow::Result<HashMap<String, Vec<u8>>>;
+    fn load(&mut self) -> anyhow::Result<HashMap<String, Bytes>>;
 
     fn load_currencies(&mut self) -> anyhow::Result<HashMap<Ustr, Currency>>;
 
@@ -49,7 +51,7 @@ pub trait CacheDatabaseAdapter {
 
     fn load_synthetics(&mut self) -> anyhow::Result<HashMap<InstrumentId, SyntheticInstrument>>;
 
-    fn load_accounts(&mut self) -> anyhow::Result<HashMap<AccountId, Box<dyn Account>>>;
+    fn load_accounts(&mut self) -> anyhow::Result<HashMap<AccountId, AccountAny>>;
 
     fn load_orders(&mut self) -> anyhow::Result<HashMap<ClientOrderId, OrderAny>>;
 
@@ -71,27 +73,22 @@ pub trait CacheDatabaseAdapter {
         instrument_id: &InstrumentId,
     ) -> anyhow::Result<SyntheticInstrument>;
 
-    fn load_account(&mut self, account_id: &AccountId) -> anyhow::Result<Box<dyn Account>>;
+    fn load_account(&mut self, account_id: &AccountId) -> anyhow::Result<Option<AccountAny>>;
 
     fn load_order(&mut self, client_order_id: &ClientOrderId) -> anyhow::Result<Option<OrderAny>>;
 
     fn load_position(&mut self, position_id: &PositionId) -> anyhow::Result<Position>;
 
-    fn load_actor(
-        &mut self,
-        component_id: &ComponentId,
-    ) -> anyhow::Result<HashMap<String, Vec<u8>>>;
+    fn load_actor(&mut self, component_id: &ComponentId) -> anyhow::Result<HashMap<String, Bytes>>;
 
     fn delete_actor(&mut self, component_id: &ComponentId) -> anyhow::Result<()>;
 
-    fn load_strategy(
-        &mut self,
-        strategy_id: &StrategyId,
-    ) -> anyhow::Result<HashMap<String, Vec<u8>>>;
+    fn load_strategy(&mut self, strategy_id: &StrategyId)
+        -> anyhow::Result<HashMap<String, Bytes>>;
 
     fn delete_strategy(&mut self, component_id: &StrategyId) -> anyhow::Result<()>;
 
-    fn add(&mut self, key: String, value: Vec<u8>) -> anyhow::Result<()>;
+    fn add(&mut self, key: String, value: Bytes) -> anyhow::Result<()>;
 
     fn add_currency(&mut self, currency: &Currency) -> anyhow::Result<()>;
 
@@ -99,11 +96,25 @@ pub trait CacheDatabaseAdapter {
 
     fn add_synthetic(&mut self, synthetic: &SyntheticInstrument) -> anyhow::Result<()>;
 
-    fn add_account(&mut self, account: &dyn Account) -> anyhow::Result<Box<dyn Account>>;
+    fn add_account(&mut self, account: &AccountAny) -> anyhow::Result<()>;
 
-    fn add_order(&mut self, order: &OrderAny) -> anyhow::Result<()>;
+    fn add_order(&mut self, order: &OrderAny, client_id: Option<ClientId>) -> anyhow::Result<()>;
 
     fn add_position(&mut self, position: &Position) -> anyhow::Result<()>;
+
+    fn add_order_book(&mut self, order_book: &OrderBook) -> anyhow::Result<()>;
+
+    fn add_quote(&mut self, quote: &QuoteTick) -> anyhow::Result<()>;
+
+    fn load_quotes(&mut self, instrument_id: &InstrumentId) -> anyhow::Result<Vec<QuoteTick>>;
+
+    fn add_trade(&mut self, trade: &TradeTick) -> anyhow::Result<()>;
+
+    fn load_trades(&mut self, instrument_id: &InstrumentId) -> anyhow::Result<Vec<TradeTick>>;
+
+    fn add_bar(&mut self, bar: &Bar) -> anyhow::Result<()>;
+
+    fn load_bars(&mut self, instrument_id: &InstrumentId) -> anyhow::Result<Vec<Bar>>;
 
     fn index_venue_order_id(
         &mut self,
@@ -121,7 +132,7 @@ pub trait CacheDatabaseAdapter {
 
     fn update_strategy(&mut self) -> anyhow::Result<()>;
 
-    fn update_account(&mut self, account: &dyn Account) -> anyhow::Result<()>;
+    fn update_account(&mut self, account: &AccountAny) -> anyhow::Result<()>;
 
     fn update_order(&mut self, order: &OrderAny) -> anyhow::Result<()>;
 

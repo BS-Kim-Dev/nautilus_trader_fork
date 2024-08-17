@@ -42,9 +42,10 @@ use crate::{
         rsi::RelativeStrengthIndex, stochastics::Stochastics, swings::Swings,
         vhf::VerticalHorizontalFilter,
     },
-    ratio::efficiency_ratio::EfficiencyRatio,
+    ratio::{efficiency_ratio::EfficiencyRatio, spread_analyzer::SpreadAnalyzer},
     volatility::{
-        dc::DonchianChannel, kc::KeltnerChannel, rvi::RelativeVolatilityIndex, vr::VolatilityRatio,
+        dc::DonchianChannel, fuzzy::FuzzyCandlesticks, kc::KeltnerChannel, kp::KeltnerPosition,
+        rvi::RelativeVolatilityIndex, vr::VolatilityRatio,
     },
 };
 
@@ -83,8 +84,8 @@ pub fn trade_tick() -> TradeTick {
 #[fixture]
 pub fn bar_ethusdt_binance_minute_bid(#[default("1522")] close_price: &str) -> Bar {
     let instrument_id = InstrumentId {
-        symbol: Symbol::new("ETHUSDT-PERP.BINANCE").unwrap(),
-        venue: Venue::new("BINANCE").unwrap(),
+        symbol: Symbol::new("ETHUSDT-PERP.BINANCE"),
+        venue: Venue::new("BINANCE"),
     };
     let bar_spec = BarSpecification {
         step: 1,
@@ -169,6 +170,11 @@ pub fn indicator_lr_10() -> LinearRegression {
 #[fixture]
 pub fn efficiency_ratio_10() -> EfficiencyRatio {
     EfficiencyRatio::new(10, Some(PriceType::Mid)).unwrap()
+}
+
+#[fixture]
+pub fn spread_analyzer_10() -> SpreadAnalyzer {
+    SpreadAnalyzer::new(10, InstrumentId::from("ETHUSDT-PERP.BINANCE")).unwrap()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -294,6 +300,24 @@ pub fn kc_10() -> KeltnerChannel {
 }
 
 #[fixture]
+pub fn kp_10() -> KeltnerPosition {
+    KeltnerPosition::new(
+        10,
+        2.0,
+        Some(MovingAverageType::Simple),
+        Some(MovingAverageType::Simple),
+        Some(true),
+        Some(0.0),
+    )
+    .unwrap()
+}
+
+#[fixture]
 pub fn roc_10() -> RateOfChange {
     RateOfChange::new(10, Some(true)).unwrap()
+}
+
+#[fixture]
+pub fn fuzzy_candlesticks_10() -> FuzzyCandlesticks {
+    FuzzyCandlesticks::new(10, 0.1, 0.15, 0.2, 0.3).unwrap()
 }

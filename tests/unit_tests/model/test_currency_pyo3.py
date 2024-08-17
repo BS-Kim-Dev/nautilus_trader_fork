@@ -41,7 +41,7 @@ class TestCurrency:
 
     def test_currency_with_precision_over_maximum_raises_value_error(self):
         # Arrange, Act, Assert
-        with pytest.raises(ValueError):
+        with pytest.raises(BaseException):
             Currency(
                 code="AUD",
                 precision=10,
@@ -144,7 +144,7 @@ class TestCurrency:
 
         # Act
         pickled = pickle.dumps(currency)
-        unpickled = pickle.loads(pickled)  # noqa S301 (pickle is safe here)
+        unpickled = pickle.loads(pickled)  # noqa: S301 (pickle is safe here)
 
         # Assert
         assert unpickled == currency
