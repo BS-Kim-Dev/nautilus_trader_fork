@@ -82,9 +82,6 @@ tests/test_data/large/*
 tests/unit_tests/catalog/
 tests/unit_tests/persistence/catalog/
 
-/dataset
-
-
 # Exceptions
 !/nautilus_core/adapters/src/databento/test_data/*
 !tests/test_data/large/checksums.json
