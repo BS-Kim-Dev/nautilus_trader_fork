@@ -54,7 +54,7 @@ from nautilus_trader.model.objects import Quantity
 
 class BinanceFuturesInstrumentProvider(InstrumentProvider):
     """
-    Provides a means of loading instruments from the `Binance Futures` exchange.
+    Provides a means of loading instruments from the Binance Futures exchange.
 
     Parameters
     ----------
@@ -72,7 +72,7 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
         account_type: BinanceAccountType = BinanceAccountType.USDT_FUTURE,
         config: InstrumentProviderConfig | None = None,
         venue: Venue = BINANCE_VENUE,
-    ):
+    ) -> None:
         super().__init__(config=config)
 
         self._clock = clock

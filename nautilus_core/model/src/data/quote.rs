@@ -13,7 +13,7 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-//! A `QuoteTick` data type representing a top-of-book quote state.
+//! A `QuoteTick` data type representing a top-of-book state.
 
 use std::{
     cmp,
@@ -74,21 +74,51 @@ impl QuoteTick {
         ask_size: Quantity,
         ts_event: UnixNanos,
         ts_init: UnixNanos,
+    ) -> Self {
+        Self::new_checked(
+            instrument_id,
+            bid_price,
+            ask_price,
+            bid_size,
+            ask_size,
+            ts_event,
+            ts_init,
+        )
+        .expect(FAILED)
+    }
+
+    /// Creates a new [`QuoteTick`] instance with correctness checking.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if:
+    /// - `bid_price.precision` does not equal `ask_price.precision`.
+    /// - `bid_size.precision` does not equal `ask_size.precision`.
+    ///
+    /// # Notes
+    ///
+    /// PyO3 requires a `Result` type for proper error handling and stacktrace printing in Python.
+    pub fn new_checked(
+        instrument_id: InstrumentId,
+        bid_price: Price,
+        ask_price: Price,
+        bid_size: Quantity,
+        ask_size: Quantity,
+        ts_event: UnixNanos,
+        ts_init: UnixNanos,
     ) -> anyhow::Result<Self> {
         check_equal_u8(
             bid_price.precision,
             ask_price.precision,
             "bid_price.precision",
             "ask_price.precision",
-        )
-        .expect(FAILED);
+        )?;
         check_equal_u8(
             bid_size.precision,
             ask_size.precision,
             "bid_size.precision",
             "ask_size.precision",
-        )
-        .expect(FAILED);
+        )?;
         Ok(Self {
             instrument_id,
             bid_price,
@@ -127,6 +157,7 @@ impl QuoteTick {
         metadata
     }
 
+    /// Returns the [`Price`] for this quote depending on the given `price_type`.
     #[must_use]
     pub fn extract_price(&self, price_type: PriceType) -> Price {
         match price_type {
@@ -140,6 +171,7 @@ impl QuoteTick {
         }
     }
 
+    /// Returns the [`Quantity`] for this quote depending on the given `price_type`.
     #[must_use]
     pub fn extract_size(&self, price_type: PriceType) -> Quantity {
         match price_type {
@@ -187,15 +219,15 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        data::{quote::QuoteTick, stubs::quote_tick_ethusdt_binance},
+        data::{quote::QuoteTick, stubs::quote_ethusdt_binance},
         enums::PriceType,
     };
 
     #[rstest]
-    fn test_to_string(quote_tick_ethusdt_binance: QuoteTick) {
-        let tick = quote_tick_ethusdt_binance;
+    fn test_to_string(quote_ethusdt_binance: QuoteTick) {
+        let quote = quote_ethusdt_binance;
         assert_eq!(
-            tick.to_string(),
+            quote.to_string(),
             "ETHUSDT-PERP.BINANCE,10000.0000,10001.0000,1.00000000,1.00000000,0"
         );
     }
@@ -207,38 +239,38 @@ mod tests {
     fn test_extract_price(
         #[case] input: PriceType,
         #[case] expected: i64,
-        quote_tick_ethusdt_binance: QuoteTick,
+        quote_ethusdt_binance: QuoteTick,
     ) {
-        let tick = quote_tick_ethusdt_binance;
-        let result = tick.extract_price(input).raw;
+        let quote = quote_ethusdt_binance;
+        let result = quote.extract_price(input).raw;
         assert_eq!(result, expected);
     }
 
     #[rstest]
-    fn test_from_pyobject(quote_tick_ethusdt_binance: QuoteTick) {
+    fn test_from_pyobject(quote_ethusdt_binance: QuoteTick) {
         pyo3::prepare_freethreaded_python();
-        let tick = quote_tick_ethusdt_binance;
+        let quote = quote_ethusdt_binance;
 
         Python::with_gil(|py| {
-            let tick_pyobject = tick.into_py(py);
+            let tick_pyobject = quote.into_py(py);
             let parsed_tick = QuoteTick::from_pyobject(tick_pyobject.bind(py)).unwrap();
-            assert_eq!(parsed_tick, tick);
+            assert_eq!(parsed_tick, quote);
         });
     }
 
     #[rstest]
-    fn test_json_serialization(quote_tick_ethusdt_binance: QuoteTick) {
-        let tick = quote_tick_ethusdt_binance;
-        let serialized = tick.as_json_bytes().unwrap();
+    fn test_json_serialization(quote_ethusdt_binance: QuoteTick) {
+        let quote = quote_ethusdt_binance;
+        let serialized = quote.as_json_bytes().unwrap();
         let deserialized = QuoteTick::from_json_bytes(serialized.as_ref()).unwrap();
-        assert_eq!(deserialized, tick);
+        assert_eq!(deserialized, quote);
     }
 
     #[rstest]
-    fn test_msgpack_serialization(quote_tick_ethusdt_binance: QuoteTick) {
-        let tick = quote_tick_ethusdt_binance;
-        let serialized = tick.as_msgpack_bytes().unwrap();
+    fn test_msgpack_serialization(quote_ethusdt_binance: QuoteTick) {
+        let quote = quote_ethusdt_binance;
+        let serialized = quote.as_msgpack_bytes().unwrap();
         let deserialized = QuoteTick::from_msgpack_bytes(serialized.as_ref()).unwrap();
-        assert_eq!(deserialized, tick);
+        assert_eq!(deserialized, quote);
     }
 }

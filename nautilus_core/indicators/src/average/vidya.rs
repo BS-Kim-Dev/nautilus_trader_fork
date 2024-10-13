@@ -63,11 +63,11 @@ impl Indicator for VariableIndexDynamicAverage {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, quote: &QuoteTick) {
+    fn handle_quote(&mut self, quote: &QuoteTick) {
         self.update_raw(quote.extract_price(self.price_type).into());
     }
 
-    fn handle_trade_tick(&mut self, trade: &TradeTick) {
+    fn handle_trade(&mut self, trade: &TradeTick) {
         self.update_raw((&trade.price).into());
     }
 
@@ -87,12 +87,13 @@ impl Indicator for VariableIndexDynamicAverage {
 
 impl VariableIndexDynamicAverage {
     /// Creates a new [`VariableIndexDynamicAverage`] instance.
+    #[must_use]
     pub fn new(
         period: usize,
         price_type: Option<PriceType>,
         cmo_ma_type: Option<MovingAverageType>,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             period,
             price_type: price_type.unwrap_or(PriceType::Last),
             value: 0.0,
@@ -100,9 +101,9 @@ impl VariableIndexDynamicAverage {
             has_inputs: false,
             initialized: false,
             alpha: 2.0 / (period as f64 + 1.0),
-            cmo: ChandeMomentumOscillator::new(period, cmo_ma_type)?,
+            cmo: ChandeMomentumOscillator::new(period, cmo_ma_type),
             cmo_pct: 0.0,
-        })
+        }
     }
 }
 
@@ -198,18 +199,18 @@ mod tests {
     #[rstest]
     fn test_handle_quote_tick(
         mut indicator_vidya_10: VariableIndexDynamicAverage,
-        quote_tick: QuoteTick,
+        stub_quote: QuoteTick,
     ) {
-        indicator_vidya_10.handle_quote_tick(&quote_tick);
+        indicator_vidya_10.handle_quote(&stub_quote);
         assert_eq!(indicator_vidya_10.value, 0.0);
     }
 
     #[rstest]
     fn test_handle_trade_tick(
         mut indicator_vidya_10: VariableIndexDynamicAverage,
-        trade_tick: TradeTick,
+        stub_trade: TradeTick,
     ) {
-        indicator_vidya_10.handle_trade_tick(&trade_tick);
+        indicator_vidya_10.handle_trade(&stub_trade);
         assert_eq!(indicator_vidya_10.value, 0.0);
     }
 

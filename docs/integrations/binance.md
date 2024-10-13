@@ -5,11 +5,25 @@ of daily trading volume, and open interest of crypto assets and crypto
 derivative products. This integration supports live market data ingest and order
 execution with Binance.
 
+## Installation
+
+To install the latest `nautilus_trader` package along with the `binance` dependencies using pip:
+
+```
+pip install -U "nautilus_trader[binance]"
+```
+
+To install from source using poetry:
+
+```
+poetry install --extras binance
+```
+
 ## Overview
 
 The following documentation assumes a trader is setting up for both live market
 data feeds, and trade execution. The full Binance integration consists of an assortment of components,
-which can be used together or separately depending on the users needs.
+which can be used together or separately depending on the user's needs.
 
 - `BinanceHttpClient`: Low-level HTTP API connectivity
 - `BinanceWebSocketClient`: Low-level WebSocket API connectivity
@@ -40,7 +54,7 @@ As per the Nautilus unification policy for symbols, the native Binance symbols a
 spot assets and futures contracts. Because NautilusTrader is capable of multi-venue + multi-account
 trading, it's necessary to explicitly clarify the difference between `BTCUSDT` as the spot and margin traded
 pair, and the `BTCUSDT` perpetual futures contract (this symbol is used for _both_ natively by Binance). Therefore, NautilusTrader appends `-PERP` to all native perpetual symbols.
-E.g. for Binance Futures, the said instruments symbol is `BTCUSDT-PERP` within the Nautilus system boundary.
+E.g. for Binance Futures, the said instrument's symbol is `BTCUSDT-PERP` within the Nautilus system boundary.
 
 ## Order types
 
@@ -201,7 +215,7 @@ config = TradingNodeConfig(
 
 ### Aggregated trades
 
-Binance provide aggregated trade data endpoints as an alternative source of trade ticks.
+Binance provides aggregated trade data endpoints as an alternative source of trade ticks.
 In comparison to the default trade endpoints, aggregated trade data endpoints can return all
 ticks between a `start_time` and `end_time`.
 
@@ -228,12 +242,78 @@ instrument_provider=InstrumentProviderConfig(
 )
 ```
 
+### Futures Hedge mode
+
+Binance Futures Hedge mode is a position mode where a trader opens positions in both long and short 
+directions to mitigate risk and potentially profit from market volatility.
+
+To use Binance Future Hedge mode, you need to follow the three items below:
+- 1. Before starting the strategy, ensure that hedge mode is configured on Binance.
+- 2. Set the `use_reduce_only` option to `False` in BinanceExecClientConfig (this is `True` by default.)
+    ```python
+    config = TradingNodeConfig(
+        ...,  # Omitted
+        data_clients={
+            "BINANCE": BinanceDataClientConfig(
+                api_key=None,  # 'BINANCE_API_KEY' env var
+                api_secret=None,  # 'BINANCE_API_SECRET' env var
+                account_type=BinanceAccountType.USDT_FUTURE,
+                base_url_http=None,  # Override with custom endpoint
+                base_url_ws=None,  # Override with custom endpoint
+            ),
+        },
+        exec_clients={
+            "BINANCE": BinanceExecClientConfig(
+                api_key=None,  # 'BINANCE_API_KEY' env var
+                api_secret=None,  # 'BINANCE_API_SECRET' env var
+                account_type=BinanceAccountType.USDT_FUTURE,
+                base_url_http=None,  # Override with custom endpoint
+                base_url_ws=None,  # Override with custom endpoint
+                use_reduce_only=False,  # Must be disabled for Hedge mode
+            ),
+        }
+    )
+    ```
+
+- 3. When submitting an order, use a suffix (`LONG` or `SHORT` ) in the `position_id` to indicate the position direction.
+    ```python
+    class EMACrossHedgeMode(Strategy):
+        ...,  # Omitted
+        def buy(self) -> None:
+            """
+            Users simple buy method (example).
+            """
+            order: MarketOrder = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.BUY,
+                quantity=self.instrument.make_qty(self.trade_size),
+                # time_in_force=TimeInForce.FOK,
+            )
+
+            # LONG suffix is recognized as a long position by Binance adapter.
+            position_id = PositionId(f"{self.instrument_id}-LONG")
+            self.submit_order(order, position_id)
+
+        def sell(self) -> None:
+            """
+            Users simple sell method (example).
+            """
+            order: MarketOrder = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=self.instrument.make_qty(self.trade_size),
+                # time_in_force=TimeInForce.FOK,
+            )
+            # SHORT suffix is recognized as a short position by Binance adapter.
+            position_id = PositionId(f"{self.instrument_id}-SHORT")
+            self.submit_order(order, position_id)
+    ```
+
 ## Order books
 
 Order books can be maintained at full or partial depths depending on the
-subscription options. WebSocket stream throttling is different between
-Spot and Futures exchanges, Nautilus will automatically use the highest streaming
-rate possible:
+subscription. WebSocket stream throttling is different between Spot and Futures exchanges,
+Nautilus will use the highest streaming rate possible:
 
 - Spot 100ms
 - Futures 0ms (unthrottled)
@@ -273,7 +353,7 @@ methods may eventually become first-class (not requiring custom/generic subscrip
 
 ### BinanceFuturesMarkPriceUpdate
 
-You can subscribe to `BinanceFuturesMarkPriceUpdate` (included funding rating info)
+You can subscribe to `BinanceFuturesMarkPriceUpdate` (including funding rating info)
 data streams by subscribing in the following way from your actor or strategy:
 
 ```python

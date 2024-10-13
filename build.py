@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 
-import datetime
+import datetime as dt
 import itertools
 import os
 import platform
 import shutil
 import subprocess
+import sys
 import sysconfig
+import tomllib
 from pathlib import Path
 
 import numpy as np
-import toml
 from Cython.Build import build_ext
 from Cython.Build import cythonize
 from Cython.Compiler import Options
@@ -46,12 +47,17 @@ else:
 ################################################################################
 #  RUST BUILD
 ################################################################################
+
+TARGET_DIR = Path.cwd() / "nautilus_core" / "target" / BUILD_MODE
+
 if platform.system() == "Linux":
     # Use clang as the default compiler
     os.environ["CC"] = "clang"
     os.environ["LDSHARED"] = "clang -shared"
 
-TARGET_DIR = Path.cwd() / "nautilus_core" / "target" / BUILD_MODE
+if platform.system() == "Darwin" and platform.machine() == "arm64":
+    os.environ["CFLAGS"] = "-arch arm64"
+    os.environ["LDFLAGS"] = "-arch arm64 -w"
 
 if platform.system() == "Windows":
     # Linker error 1181
@@ -81,13 +87,14 @@ RUST_LIBS: list[str] = [str(path) for path in RUST_LIB_PATHS]
 
 
 def _build_rust_libs() -> None:
+    print("Compiling Rust libraries...")
+
     try:
         # Build the Rust libraries using Cargo
         if RUST_TOOLCHAIN not in ("stable", "nightly"):
             raise ValueError(f"Invalid `RUST_TOOLCHAIN` '{RUST_TOOLCHAIN}'")
 
         build_options = " --release" if BUILD_MODE == "release" else ""
-        print("Compiling Rust libraries...")
 
         cmd_args = [
             "cargo",
@@ -339,7 +346,9 @@ def build() -> None:
 
 
 if __name__ == "__main__":
-    nautilus_trader_version = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
+    with open("pyproject.toml", "rb") as f:
+        pyproject_data = tomllib.load(f)
+    nautilus_trader_version = pyproject_data["tool"]["poetry"]["version"]
     print("\033[36m")
     print("=====================================================================")
     print(f"Nautilus Builder {nautilus_trader_version}")
@@ -347,21 +356,30 @@ if __name__ == "__main__":
     print(f"System: {platform.system()} {platform.machine()}")
     print(f"Clang:  {_get_clang_version()}")
     print(f"Rust:   {_get_rustc_version()}")
-    print(f"Python: {platform.python_version()}")
+    print(f"Python: {platform.python_version()} ({sys.executable})")
     print(f"Cython: {cython_compiler_version}")
-    print(f"NumPy:  {np.__version__}\n")
+    print(f"NumPy:  {np.__version__}")
 
-    print(f"RUST_TOOLCHAIN={RUST_TOOLCHAIN}")
+    print(f"\nRUST_TOOLCHAIN={RUST_TOOLCHAIN}")
     print(f"BUILD_MODE={BUILD_MODE}")
     print(f"BUILD_DIR={BUILD_DIR}")
     print(f"PROFILE_MODE={PROFILE_MODE}")
     print(f"ANNOTATION_MODE={ANNOTATION_MODE}")
     print(f"PARALLEL_BUILD={PARALLEL_BUILD}")
     print(f"COPY_TO_SOURCE={COPY_TO_SOURCE}")
-    print(f"PYO3_ONLY={PYO3_ONLY}\n")
+    print(f"PYO3_ONLY={PYO3_ONLY}")
+    print(f"CC={os.environ['CC']}") if "CC" in os.environ else None
+    print(f"LDSHARED={os.environ['LDSHARED']}") if "LDSHARED" in os.environ else None
+    print(f"CFLAGS={os.environ['CFLAGS']}") if "CFLAGS" in os.environ else None
+    print(f"LDFLAGS={os.environ['LDFLAGS']}") if "LDFLAGS" in os.environ else None
+    (
+        print(f"LD_LIBRARY_PATH={os.environ['LD_LIBRARY_PATH']}")
+        if "LD_LIBRARY_PATH" in os.environ
+        else None
+    )
 
-    print("Starting build...")
-    ts_start = datetime.datetime.now(datetime.timezone.utc)
+    print("\nStarting build...")
+    ts_start = dt.datetime.now(dt.UTC)
     build()
-    print(f"Build time: {datetime.datetime.now(datetime.timezone.utc) - ts_start}")
+    print(f"Build time: {dt.datetime.now(dt.UTC) - ts_start}")
     print("\033[32m" + "Build completed" + "\033[0m")

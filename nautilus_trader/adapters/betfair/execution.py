@@ -168,7 +168,7 @@ class BetfairExecutionClient(LiveExecutionClient):
     async def _connect(self) -> None:
         self._log.info("Connecting to BetfairHttpClient...")
         await self._client.connect()
-        self._log.info("BetfairHttpClient login successful.", LogColor.GREEN)
+        self._log.info("BetfairHttpClient login successful", LogColor.GREEN)
 
         # Connections and start-up checks
         self._log.debug(
@@ -186,7 +186,9 @@ class BetfairExecutionClient(LiveExecutionClient):
 
     async def _disconnect(self) -> None:
         # Shutdown account updates
-        self.account_state_task.cancel()
+        if self.account_state_task:
+            self._log.debug("Canceling task 'account_state'")
+            self.account_state_task.cancel()
 
         # Close socket
         self._log.info("Closing streaming socket")
@@ -200,7 +202,7 @@ class BetfairExecutionClient(LiveExecutionClient):
     async def on_api_exception(self, error: BetfairError) -> None:
         if "INVALID_SESSION_INFORMATION" in error.args[0] or "NO_SESSION" in error.args[0]:
             if self._reconnect_in_progress:
-                self._log.info("Reconnect already in progress.")
+                self._log.info("Reconnect already in progress")
                 return
 
             # Avoid multiple reconnection attempts when multiple INVALID_SESSION_INFORMATION errors
@@ -210,7 +212,7 @@ class BetfairExecutionClient(LiveExecutionClient):
 
             try:
                 # Session is invalid, need to reconnect
-                self._log.warning("Invalid session error, reconnecting..")
+                self._log.warning("Invalid session error, reconnecting...")
                 await self._disconnect()
                 await self._connect()
                 self._log.info("Reconnected.")
@@ -233,8 +235,8 @@ class BetfairExecutionClient(LiveExecutionClient):
             try:
                 await update_account_state()
                 await asyncio.sleep(self.request_account_state_period)
-            except Exception:
-                self._log.error(f"account_state_updates: {traceback.format_exc()}")
+            except asyncio.CancelledError:
+                self._log.debug("Canceled task 'account_state_updates'")
 
     async def request_account_state(self) -> AccountState:
         account_details = await self._client.get_account_details()
@@ -388,7 +390,7 @@ class BetfairExecutionClient(LiveExecutionClient):
         start: pd.Timestamp | None = None,
         end: pd.Timestamp | None = None,
     ) -> list[PositionStatusReport]:
-        self._log.warning("Cannot generate `PositionStatusReports`: not yet implemented")
+        self._log.info("Skipping generate_position_status_reports, not implemented for Betfair")
 
         return []
 
@@ -429,7 +431,7 @@ class BetfairExecutionClient(LiveExecutionClient):
             return
 
         self._log.debug(f"result={result}")
-        for report in result.instruction_reports:
+        for report in result.instruction_reports or []:
             if result.status == ExecutionReportStatus.FAILURE:
                 reason = f"{result.error_code.name} ({result.error_code.__doc__})"
                 self._log.warning(f"Submit failed - {reason}")
@@ -550,7 +552,7 @@ class BetfairExecutionClient(LiveExecutionClient):
 
         self._log.debug(f"result={result}")
 
-        for report in result.instruction_reports:
+        for report in result.instruction_reports or []:
             if report.status in {ExecutionReportStatus.FAILURE, InstructionReportStatus.FAILURE}:
                 reason = f"{result.error_code.name} ({result.error_code.__doc__})"
                 self._log.warning(f"replace failed - {reason}")
@@ -623,7 +625,7 @@ class BetfairExecutionClient(LiveExecutionClient):
 
         self._log.debug(f"result={result}")
 
-        for report in result.instruction_reports:
+        for report in result.instruction_reports or []:
             if report.status in {ExecutionReportStatus.FAILURE, InstructionReportStatus.FAILURE}:
                 reason = f"{result.error_code.name} ({result.error_code.__doc__})"
                 self._log.warning(f"size reduction failed - {reason}")
@@ -679,7 +681,7 @@ class BetfairExecutionClient(LiveExecutionClient):
         self._log.debug(f"result={result}")
 
         # Parse response
-        for report in result.instruction_reports:
+        for report in result.instruction_reports or []:
             venue_order_id = VenueOrderId(str(report.instruction.bet_id))
             if report.status == InstructionReportStatus.FAILURE:
                 reason = f"{report.error_code.name}: {report.error_code.__doc__}"

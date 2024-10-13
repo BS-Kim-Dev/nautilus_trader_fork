@@ -19,6 +19,7 @@ pub mod bar;
 pub mod delta;
 pub mod deltas;
 pub mod depth;
+pub mod greeks;
 pub mod order;
 pub mod quote;
 pub mod status;
@@ -62,7 +63,8 @@ pub fn data_to_pycapsule(py: Python, data: Data) -> PyObject {
 ///
 /// # Panics
 ///
-/// Panics if the capsule cannot be downcast to a `PyCapsule`, indicating a type mismatch
+/// This function panics:
+/// - If the capsule cannot be downcast to a `PyCapsule`, indicating a type mismatch
 /// or improper capsule handling.
 ///
 /// # Safety

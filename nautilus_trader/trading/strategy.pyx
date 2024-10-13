@@ -84,6 +84,7 @@ from nautilus_trader.model.events.position cimport PositionEvent
 from nautilus_trader.model.events.position cimport PositionOpened
 from nautilus_trader.model.functions cimport oms_type_from_str
 from nautilus_trader.model.functions cimport order_side_to_str
+from nautilus_trader.model.functions cimport order_status_to_str
 from nautilus_trader.model.functions cimport position_side_to_str
 from nautilus_trader.model.identifiers cimport ClientOrderId
 from nautilus_trader.model.identifiers cimport ExecAlgorithmId
@@ -769,9 +770,13 @@ cdef class Strategy(Actor):
         not be what you intended.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(order, "order")
-        Condition.equal(order.status_c(), OrderStatus.INITIALIZED, "order", "order_status")
+        if order._fsm.state != OrderStatus.INITIALIZED:  # Check predicate first for efficiency
+            Condition.is_true(
+                order.status_c() == OrderStatus.INITIALIZED,
+                f"Invalid order status on submit: expected 'INITIALIZED', was '{order.status_string_c()}'",
+            )
 
         # Publish initialized event
         self._msgbus.publish_c(
@@ -846,7 +851,7 @@ cdef class Strategy(Actor):
         not be what you intended.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(order_list, "order_list")
 
         cdef Order order
@@ -956,7 +961,7 @@ cdef class Strategy(Actor):
         https://www.onixs.biz/fix-dictionary/5.0.SP2/msgType_G_71.html
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(order, "order")
 
         cdef ModifyOrder command = self._create_modify_order(
@@ -990,7 +995,7 @@ cdef class Strategy(Actor):
             If ``None`` then will be inferred from the venue in the instrument ID.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(order, "order")
 
         cdef CancelOrder command = self._create_cancel_order(
@@ -1109,7 +1114,7 @@ cdef class Strategy(Actor):
             If ``None`` then will be inferred from the venue in the instrument ID.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(instrument_id, "instrument_id")
 
         cdef list open_orders = self.cache.orders_open(
@@ -1190,6 +1195,7 @@ cdef class Strategy(Actor):
         Position position,
         ClientId client_id = None,
         list[str] tags = None,
+        bint reduce_only = True,
     ):
         """
         Close the given position.
@@ -1206,9 +1212,12 @@ cdef class Strategy(Actor):
             If ``None`` then will be inferred from the venue in the instrument ID.
         tags : list[str], optional
             The tags for the market order closing the position.
+        reduce_only : bool, default True
+            If the market order to close the position should carry the 'reduce-only' execution instruction.
+            Optional, as not all venues support this feature.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(position, "position")
         Condition.not_none(self.trader_id, "self.trader_id")
         Condition.not_none(self.order_factory, "self.order_factory")
@@ -1226,7 +1235,7 @@ cdef class Strategy(Actor):
             order_side=Order.closing_side_c(position.side),
             quantity=position.quantity,
             time_in_force=TimeInForce.GTC,
-            reduce_only=True,
+            reduce_only=reduce_only,
             quote_quantity=False,
             exec_algorithm_id=None,
             exec_algorithm_params=None,
@@ -1241,6 +1250,7 @@ cdef class Strategy(Actor):
         PositionSide position_side = PositionSide.NO_POSITION_SIDE,
         ClientId client_id = None,
         list[str] tags = None,
+        bint reduce_only = True,
     ):
         """
         Close all positions for the given instrument ID for this strategy.
@@ -1256,10 +1266,13 @@ cdef class Strategy(Actor):
             If ``None`` then will be inferred from the venue in the instrument ID.
         tags : list[str], optional
             The tags for the market orders closing the positions.
+        reduce_only : bool, default True
+            If the market orders to close positions should carry the 'reduce-only' execution instruction.
+            Optional, as not all venues support this feature.
 
         """
         # instrument_id can be None
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
 
         cdef list positions_open = self.cache.positions_open(
             venue=None,  # Faster query filtering
@@ -1282,7 +1295,7 @@ cdef class Strategy(Actor):
 
         cdef Position position
         for position in positions_open:
-            self.close_position(position, client_id, tags)
+            self.close_position(position, client_id, tags, reduce_only)
 
     cpdef void query_order(self, Order order, ClientId client_id = None):
         """
@@ -1302,7 +1315,7 @@ cdef class Strategy(Actor):
             If ``None`` then will be inferred from the venue in the instrument ID.
 
         """
-        Condition.true(self.trader_id is not None, "The strategy has not been registered")
+        Condition.is_true(self.trader_id is not None, "The strategy has not been registered")
         Condition.not_none(order, "order")
 
         cdef QueryOrder command = QueryOrder(
@@ -1332,7 +1345,7 @@ cdef class Strategy(Actor):
             updating = True
 
         if price is not None:
-            Condition.true(
+            Condition.is_true(
                 order.order_type in LIMIT_ORDER_TYPES,
                 fail_msg=f"{order.type_string_c()} orders do not have a LIMIT price",
             )
@@ -1340,7 +1353,7 @@ cdef class Strategy(Actor):
                 updating = True
 
         if trigger_price is not None:
-            Condition.true(
+            Condition.is_true(
                 order.order_type in STOP_ORDER_TYPES,
                 fail_msg=f"{order.type_string_c()} orders do not have a STOP trigger price",
             )

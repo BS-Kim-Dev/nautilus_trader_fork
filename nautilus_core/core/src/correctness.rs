@@ -13,8 +13,8 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-//! Functions for static condition checks similar to the *design by contract* philosophy
-//! to help ensure logical correctness.
+//! Functions for condition checks similar to the *design by contract* philosophy
+//! to ensure logical correctness.
 //!
 //! This module provides validation checking of function or method conditions.
 //!
@@ -26,9 +26,11 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
 };
+
+use indexmap::IndexMap;
 
 /// A message prefix that can be used with calls to `expect` or other assertion-related functions.
 ///
@@ -57,6 +59,7 @@ pub fn check_predicate_false(predicate: bool, fail_msg: &str) -> anyhow::Result<
 ///
 /// # Errors
 ///
+/// This function returns an error:
 /// - If `s` is an empty string.
 /// - If `s` consists solely of whitespace characters.
 /// - If `s` contains one or more non-ASCII characters.
@@ -87,6 +90,7 @@ pub fn check_valid_string(s: &str, param: &str) -> anyhow::Result<()> {
 ///
 /// # Errors
 ///
+/// This function returns an error:
 /// - If `s` is an empty string.
 /// - If `s` consists solely of whitespace characters.
 /// - If `s` contains one or more non-ASCII characters.
@@ -106,16 +110,14 @@ pub fn check_string_contains(s: &str, pat: &str, param: &str) -> anyhow::Result<
 }
 
 /// Checks the values are equal.
-pub fn check_equal<T: PartialEq + Debug>(
+pub fn check_equal<T: PartialEq + Debug + Display>(
     lhs: T,
     rhs: T,
     lhs_param: &str,
     rhs_param: &str,
 ) -> anyhow::Result<()> {
     if lhs != rhs {
-        anyhow::bail!(
-            "'{lhs_param}' value of {lhs:?} was not equal to '{rhs_param}' value of {rhs:?}",
-        );
+        anyhow::bail!("'{lhs_param}' value of {lhs} was not equal to '{rhs_param}' value of {rhs}",);
     }
     Ok(())
 }
@@ -308,6 +310,50 @@ where
     Ok(())
 }
 
+/// Checks the `key` is **not** in the `map`.
+pub fn check_key_not_in_index_map<K, V>(
+    key: &K,
+    map: &IndexMap<K, V>,
+    key_name: &str,
+    map_name: &str,
+) -> anyhow::Result<()>
+where
+    K: Hash,
+    K: std::cmp::Eq,
+    K: std::fmt::Display,
+{
+    if map.contains_key(key) {
+        anyhow::bail!(
+            "the '{key_name}' key {key} was already in the '{map_name}' map `&<{}, {}>`",
+            std::any::type_name::<K>(),
+            std::any::type_name::<V>(),
+        )
+    }
+    Ok(())
+}
+
+/// Checks the `key` is in the `map`.
+pub fn check_key_in_index_map<K, V>(
+    key: &K,
+    map: &IndexMap<K, V>,
+    key_name: &str,
+    map_name: &str,
+) -> anyhow::Result<()>
+where
+    K: Hash,
+    K: std::cmp::Eq,
+    K: std::fmt::Display,
+{
+    if !map.contains_key(key) {
+        anyhow::bail!(
+            "the '{key_name}' key {key} was not in the '{map_name}' map `&<{}, {}>`",
+            std::any::type_name::<K>(),
+            std::any::type_name::<V>(),
+        )
+    }
+    Ok(())
+}
+
 /// Checks the `member` is **not** in the `set`.
 pub fn check_member_not_in_set<V>(
     member: &V,
@@ -355,6 +401,8 @@ where
 ////////////////////////////////////////////////////////////////////////////////
 #[cfg(test)]
 mod tests {
+    use std::fmt::Display;
+
     use rstest::rstest;
 
     use super::*;
@@ -426,7 +474,7 @@ mod tests {
     #[case(10i32, 20i32, "left", "right", false)]
     #[case("hello", "hello", "left", "right", true)]
     #[case("hello", "world", "left", "right", false)]
-    fn test_check_equal<T: PartialEq + Debug>(
+    fn test_check_equal<T: PartialEq + Debug + Display>(
         #[case] lhs: T,
         #[case] rhs: T,
         #[case] lhs_param: &str,
@@ -668,9 +716,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&HashMap::<u32, u32>::new(), 5, "key", "map", true)] // Empty map
-    #[case(&HashMap::from([(1, 10), (2, 20)]), 1, "key", "map", false)] // Key exists
-    #[case(&HashMap::from([(1, 10), (2, 20)]), 5, "key", "map", true)] // Key doesn't exist
+    #[case(&HashMap::<u32, u32>::new(), 5, "key", "map", true)] // empty map
+    #[case(&HashMap::from([(1, 10), (2, 20)]), 1, "key", "map", false)] // key exists
+    #[case(&HashMap::from([(1, 10), (2, 20)]), 5, "key", "map", true)] // key doesn't exist
     fn test_check_key_not_in_map(
         #[case] map: &HashMap<u32, u32>,
         #[case] key: u32,
@@ -683,9 +731,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&HashMap::<u32, u32>::new(), 5, "key", "map", false)] // Empty map
-    #[case(&HashMap::from([(1, 10), (2, 20)]), 1, "key", "map", true)] // Key exists
-    #[case(&HashMap::from([(1, 10), (2, 20)]), 5, "key", "map", false)] // Key doesn't exist
+    #[case(&HashMap::<u32, u32>::new(), 5, "key", "map", false)] // empty map
+    #[case(&HashMap::from([(1, 10), (2, 20)]), 1, "key", "map", true)] // key exists
+    #[case(&HashMap::from([(1, 10), (2, 20)]), 5, "key", "map", false)] // key doesn't exist
     fn test_check_key_in_map(
         #[case] map: &HashMap<u32, u32>,
         #[case] key: u32,
@@ -694,6 +742,36 @@ mod tests {
         #[case] expected: bool,
     ) {
         let result = check_key_in_map(&key, map, key_name, map_name).is_ok();
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(&IndexMap::<u32, u32>::new(), 5, "key", "map", true)] // empty map
+    #[case(&IndexMap::from([(1, 10), (2, 20)]), 1, "key", "map", false)] // key exists
+    #[case(&IndexMap::from([(1, 10), (2, 20)]), 5, "key", "map", true)] // key doesn't exist
+    fn test_check_key_not_in_index_map(
+        #[case] map: &IndexMap<u32, u32>,
+        #[case] key: u32,
+        #[case] key_name: &str,
+        #[case] map_name: &str,
+        #[case] expected: bool,
+    ) {
+        let result = check_key_not_in_index_map(&key, map, key_name, map_name).is_ok();
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(&IndexMap::<u32, u32>::new(), 5, "key", "map", false)] // empty map
+    #[case(&IndexMap::from([(1, 10), (2, 20)]), 1, "key", "map", true)] // key exists
+    #[case(&IndexMap::from([(1, 10), (2, 20)]), 5, "key", "map", false)] // key doesn't exist
+    fn test_check_key_in_index_map(
+        #[case] map: &IndexMap<u32, u32>,
+        #[case] key: u32,
+        #[case] key_name: &str,
+        #[case] map_name: &str,
+        #[case] expected: bool,
+    ) {
+        let result = check_key_in_index_map(&key, map, key_name, map_name).is_ok();
         assert_eq!(result, expected);
     }
 

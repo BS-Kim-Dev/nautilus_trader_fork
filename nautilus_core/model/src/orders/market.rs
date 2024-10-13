@@ -19,7 +19,11 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use nautilus_core::{nanos::UnixNanos, uuid::UUID4};
+use nautilus_core::{
+    correctness::{check_predicate_false, FAILED},
+    nanos::UnixNanos,
+    uuid::UUID4,
+};
 use serde::{Deserialize, Serialize};
 use ustr::Ustr;
 
@@ -76,11 +80,59 @@ impl MarketOrder {
         exec_algorithm_params: Option<HashMap<Ustr, Ustr>>,
         exec_spawn_id: Option<ClientOrderId>,
         tags: Option<Vec<Ustr>>,
+    ) -> Self {
+        Self::new_checked(
+            trader_id,
+            strategy_id,
+            instrument_id,
+            client_order_id,
+            order_side,
+            quantity,
+            time_in_force,
+            init_id,
+            ts_init,
+            reduce_only,
+            quote_quantity,
+            contingency_type,
+            order_list_id,
+            linked_order_ids,
+            parent_order_id,
+            exec_algorithm_id,
+            exec_algorithm_params,
+            exec_spawn_id,
+            tags,
+        )
+        .expect(FAILED)
+    }
+
+    /// Creates a new [`MarketOrder`] instance.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_checked(
+        trader_id: TraderId,
+        strategy_id: StrategyId,
+        instrument_id: InstrumentId,
+        client_order_id: ClientOrderId,
+        order_side: OrderSide,
+        quantity: Quantity,
+        time_in_force: TimeInForce,
+        init_id: UUID4,
+        ts_init: UnixNanos,
+        reduce_only: bool,
+        quote_quantity: bool,
+        contingency_type: Option<ContingencyType>,
+        order_list_id: Option<OrderListId>,
+        linked_order_ids: Option<Vec<ClientOrderId>>,
+        parent_order_id: Option<ClientOrderId>,
+        exec_algorithm_id: Option<ExecAlgorithmId>,
+        exec_algorithm_params: Option<HashMap<Ustr, Ustr>>,
+        exec_spawn_id: Option<ClientOrderId>,
+        tags: Option<Vec<Ustr>>,
     ) -> anyhow::Result<Self> {
         check_quantity_positive(quantity)?;
-        if time_in_force == TimeInForce::Gtd {
-            anyhow::bail!("GTD not supported for Market orders");
-        }
+        check_predicate_false(
+            time_in_force == TimeInForce::Gtd,
+            "GTD not supported for Market orders",
+        )?;
         let init_order = OrderInitialized::new(
             trader_id,
             strategy_id,
@@ -115,11 +167,10 @@ impl MarketOrder {
             exec_algorithm_params,
             exec_spawn_id,
             tags,
-        )
-        .unwrap();
+        );
 
         Ok(Self {
-            core: OrderCore::new(init_order).unwrap(),
+            core: OrderCore::new(init_order),
         })
     }
 }
@@ -404,9 +455,8 @@ impl From<OrderAny> for MarketOrder {
             OrderAny::Market(order) => order,
             _ => {
                 panic!(
-                    "Invalid `OrderAny` not `{}`, was {:?}",
+                    "Invalid `OrderAny` not `{}`, was {order:?}",
                     stringify!(MarketOrder),
-                    order
                 )
             }
         }
@@ -436,7 +486,6 @@ impl From<OrderInitialized> for MarketOrder {
             event.exec_spawn_id,
             event.tags,
         )
-        .unwrap() // SAFETY: From can panic
     }
 }
 
@@ -448,33 +497,30 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        enums::{OrderSide, TimeInForce},
+        enums::{OrderSide, OrderType, TimeInForce},
         instruments::{currency_pair::CurrencyPair, stubs::*},
-        orders::stubs::*,
+        orders::builder::OrderTestBuilder,
         types::quantity::Quantity,
     };
 
     #[rstest]
     #[should_panic(expected = "Condition failed: invalid `Quantity`, should be positive and was 0")]
     fn test_positive_quantity_condition(audusd_sim: CurrencyPair) {
-        let _ = TestOrderStubs::market_order(
-            audusd_sim.id,
-            OrderSide::Buy,
-            Quantity::from(0),
-            None,
-            None,
-        );
+        let _ = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(audusd_sim.id)
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from(0))
+            .build();
     }
 
     #[rstest]
     #[should_panic(expected = "GTD not supported for Market orders")]
     fn test_gtd_condition(audusd_sim: CurrencyPair) {
-        let _ = TestOrderStubs::market_order(
-            audusd_sim.id,
-            OrderSide::Buy,
-            Quantity::from(100),
-            None,
-            Some(TimeInForce::Gtd),
-        );
+        let _ = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(audusd_sim.id)
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from(100))
+            .time_in_force(TimeInForce::Gtd)
+            .build();
     }
 }

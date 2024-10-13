@@ -213,7 +213,7 @@ class TestBacktestConfigParsing:
         )
         json = msgspec.json.encode(run_config)
         result = len(msgspec.json.encode(json))
-        assert result == 1022  # UNIX
+        assert result == 1030  # UNIX
 
     @pytest.mark.skipif(sys.platform == "win32", reason="redundant to also test Windows")
     def test_run_config_parse_obj(self) -> None:
@@ -234,7 +234,7 @@ class TestBacktestConfigParsing:
         assert isinstance(config, BacktestRunConfig)
         node = BacktestNode(configs=[config])
         assert isinstance(node, BacktestNode)
-        assert len(raw) == 765  # UNIX
+        assert len(raw) == 769  # UNIX
 
     @pytest.mark.skipif(sys.platform == "win32", reason="redundant to also test Windows")
     def test_backtest_data_config_to_dict(self) -> None:
@@ -255,7 +255,7 @@ class TestBacktestConfigParsing:
         )
         json = msgspec.json.encode(run_config)
         result = len(msgspec.json.encode(json))
-        assert result == 1822
+        assert result == 1778
 
     @pytest.mark.skipif(sys.platform == "win32", reason="redundant to also test Windows")
     def test_backtest_run_config_id(self) -> None:
@@ -263,7 +263,7 @@ class TestBacktestConfigParsing:
         print("token:", token)
         value: bytes = self.backtest_config.json()
         print("token_value:", value.decode())
-        assert token == "1d758e23defb5a69e2449ed03216ef7727c50e12c23730cc0309087ee7e71994"
+        assert token == "3c7139dc67cc3047c33a17d51ce47971671f18246c1e2e411654a35cfe04e903"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="redundant to also test Windows")
     @pytest.mark.parametrize(
@@ -279,13 +279,13 @@ class TestBacktestConfigParsing:
                 TestConfigStubs.backtest_data_config,
                 ("catalog",),
                 {},
-                ("aad6794664f7690691f1ca3c9da8d8051b21a3bab7877fc9c594a78871cb76a8",),
+                ("949ef3abd03a447949d298f38a9aab669afc740720d747d4df2a9a121d78d110",),
             ),
             (
                 TestConfigStubs.backtest_engine_config,
                 ("catalog",),
                 {"persist": True},
-                ("7ec0724f21fc85299dc336ceb0c46795fbf2151a1f239ff794930861449563a6",),
+                ("789b190f1bbf143aebf018f49307f0107cf052b2def65179d5fb133b457b3da0",),
             ),
             (
                 TestConfigStubs.risk_engine_config,
@@ -297,13 +297,13 @@ class TestBacktestConfigParsing:
                 TestConfigStubs.exec_engine_config,
                 (),
                 {},
-                ("33901383a61bc99b14f5f02de3735bcf8b287243de55ce330d32c3ade274d8e0",),
+                ("3c10dbf0e37728807d5b015505c1d978f1d6c1555318cdb040a2aa950a95f554",),
             ),
             (
                 TestConfigStubs.streaming_config,
                 ("catalog",),
                 {},
-                ("c287d8e433d931f014895daa4400171a67c30b8c61d94f51be60ad162bdef6cd",),
+                ("302b840b10cdd0cc2664ee5f3bb8623ada23d6a6c7ecb8f41117fddecc6bea9a",),
             ),
         ],
     )

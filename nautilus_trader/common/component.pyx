@@ -165,7 +165,7 @@ cdef class Clock:
 
     cpdef double timestamp(self):
         """
-        Return the current UNIX time in seconds.
+        Return the current UNIX timestamp in seconds.
 
         Returns
         -------
@@ -180,7 +180,7 @@ cdef class Clock:
 
     cpdef uint64_t timestamp_ms(self):
         """
-        Return the current UNIX time in milliseconds (ms).
+        Return the current UNIX timestamp in milliseconds (ms).
 
         Returns
         -------
@@ -193,9 +193,24 @@ cdef class Clock:
         """
         raise NotImplementedError("method `timestamp_ms` must be implemented in the subclass")  # pragma: no cover
 
+    cpdef uint64_t timestamp_us(self):
+        """
+        Return the current UNIX timestamp in microseconds (μs).
+
+        Returns
+        -------
+        uint64_t
+
+        References
+        ----------
+        https://en.wikipedia.org/wiki/Unix_time
+
+        """
+        raise NotImplementedError("method `timestamp_us` must be implemented in the subclass")  # pragma: no cover
+
     cpdef uint64_t timestamp_ns(self):
         """
-        Return the current UNIX time in nanoseconds (ns).
+        Return the current UNIX timestamp in nanoseconds (ns).
 
         Returns
         -------
@@ -281,6 +296,7 @@ cdef class Clock:
         str name,
         datetime alert_time,
         callback: Callable[[TimeEvent], None] = None,
+        bint override = False,
     ):
         """
         Set a time alert for the given time.
@@ -297,6 +313,8 @@ cdef class Clock:
             The time for the alert.
         callback : Callable[[TimeEvent], None], optional
             The callback to receive time events.
+        override: bool
+            If override is set to True an alert with a given name can be overwritten if it exists already.
 
         Raises
         ------
@@ -315,6 +333,9 @@ cdef class Clock:
         time event will be generated (rather than being invalid and failing a condition check).
 
         """
+        if override and self.next_time_ns(name) > 0:
+            self.cancel_timer(name)
+
         self.set_time_alert_ns(
             name=name,
             alert_time_ns=dt_to_unix_nanos(alert_time),
@@ -339,7 +360,7 @@ cdef class Clock:
         name : str
             The name for the alert (must be unique for this clock).
         alert_time_ns : uint64_t
-            The UNIX time (nanoseconds) for the alert.
+            The UNIX timestamp (nanoseconds) for the alert.
         callback : Callable[[TimeEvent], None], optional
             The callback to receive time events.
 
@@ -440,9 +461,9 @@ cdef class Clock:
         interval_ns : uint64_t
             The time interval (nanoseconds) for the timer.
         start_time_ns : uint64_t
-            The start UNIX time (nanoseconds) for the timer.
+            The start UNIX timestamp (nanoseconds) for the timer.
         stop_time_ns : uint64_t
-            The stop UNIX time (nanoseconds) for the timer.
+            The stop UNIX timestamp (nanoseconds) for the timer.
         callback : Callable[[TimeEvent], None], optional
             The callback to receive time events.
 
@@ -541,7 +562,7 @@ cdef class TestClock(Clock):
 
     """
 
-    __test__ = False  # Required so pytest does not consider this a test class
+    __test__ = False  # Prevents pytest from collecting this as a test class
 
     def __init__(self):
         self._mem = test_clock_new()
@@ -563,6 +584,9 @@ cdef class TestClock(Clock):
 
     cpdef uint64_t timestamp_ms(self):
         return test_clock_timestamp_ms(&self._mem)
+
+    cpdef uint64_t timestamp_us(self):
+        return test_clock_timestamp_us(&self._mem)
 
     cpdef uint64_t timestamp_ns(self):
         return test_clock_timestamp_ns(&self._mem)
@@ -604,8 +628,8 @@ cdef class TestClock(Clock):
         if start_time_ns == 0:
             start_time_ns = ts_now
         if stop_time_ns:
-            Condition.true(stop_time_ns > ts_now, "`stop_time_ns` was < `ts_now`")
-            Condition.true(start_time_ns + interval_ns <= stop_time_ns, "`start_time_ns` + `interval_ns` was > `stop_time_ns`")
+            Condition.is_true(stop_time_ns > ts_now, "`stop_time_ns` was < `ts_now`")
+            Condition.is_true(start_time_ns + interval_ns <= stop_time_ns, "`start_time_ns` + `interval_ns` was > `stop_time_ns`")
 
         test_clock_set_timer(
             &self._mem,
@@ -636,13 +660,13 @@ cdef class TestClock(Clock):
         Parameters
         ----------
         to_time_ns : uint64_t
-            The UNIX time (nanoseconds) to set.
+            The UNIX timestamp (nanoseconds) to set.
 
         """
         test_clock_set_time(&self._mem, to_time_ns)
 
     cdef CVec advance_time_c(self, uint64_t to_time_ns, bint set_time=True):
-        Condition.true(to_time_ns >= test_clock_timestamp_ns(&self._mem), "to_time_ns was < time_ns (not monotonic)")
+        Condition.is_true(to_time_ns >= test_clock_timestamp_ns(&self._mem), "to_time_ns was < time_ns (not monotonic)")
 
         return <CVec>test_clock_advance_time(&self._mem, to_time_ns, set_time)
 
@@ -653,7 +677,7 @@ cdef class TestClock(Clock):
         Parameters
         ----------
         to_time_ns : uint64_t
-            The UNIX time (nanoseconds) to advance the clock to.
+            The UNIX timestamp (nanoseconds) to advance the clock to.
         set_time : bool
             If the clock should also be set to the given `to_time_ns`.
 
@@ -727,6 +751,9 @@ cdef class LiveClock(Clock):
 
     cpdef uint64_t timestamp_ms(self):
         return live_clock_timestamp_ms(&self._mem)
+
+    cpdef uint64_t timestamp_us(self):
+        return live_clock_timestamp_us(&self._mem)
 
     cpdef uint64_t timestamp_ns(self):
         return live_clock_timestamp_ns(&self._mem)
@@ -1971,10 +1998,6 @@ cdef class MessageBus:
         The serializer for database operations.
     database : nautilus_pyo3.RedisMessageBusDatabase, optional
         The backing database for the message bus.
-    snapshot_orders : bool, default False
-        If order state snapshots should be published externally.
-    snapshot_positions : bool, default False
-        If position state snapshots should be published externally.
     config : MessageBusConfig, optional
         The configuration for the message bus.
 
@@ -1997,8 +2020,6 @@ cdef class MessageBus:
         str name = None,
         Serializer serializer = None,
         database: nautilus_pyo3.RedisMessageBusDatabase | None = None,
-        bint snapshot_orders: bool = False,
-        bint snapshot_positions: bool = False,
         config: Any | None = None,
     ) -> None:
         # Temporary fix for import error
@@ -2016,8 +2037,6 @@ cdef class MessageBus:
         self.trader_id = trader_id
         self.serializer = serializer
         self.has_backing = database is not None
-        self.snapshot_orders = snapshot_orders
-        self.snapshot_positions = snapshot_positions
 
         self._clock = clock
         self._log = Logger(name)
@@ -2265,7 +2284,11 @@ cdef class MessageBus:
             The type to add for streaming.
 
         """
+        Condition.not_none(cls, "cls")
+
         self._streaming_types.add(cls)
+
+        self._log.debug(f"Added streaming type {cls}")
 
     cpdef void send(self, str endpoint, msg: Any):
         """
@@ -2513,7 +2536,7 @@ cdef class MessageBus:
 
         # Publish externally (if configured)
         cdef bytes payload_bytes
-        if external_pub and self._database is not None and self.serializer is not None:
+        if external_pub and self._database is not None and not self._database.is_closed() and self.serializer is not None:
             if isinstance(msg, self._publishable_types):
                 if isinstance(msg, bytes):
                     payload_bytes = msg

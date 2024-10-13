@@ -65,11 +65,11 @@ impl Indicator for HullMovingAverage {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, quote: &QuoteTick) {
+    fn handle_quote(&mut self, quote: &QuoteTick) {
         self.update_raw(quote.extract_price(self.price_type).into());
     }
 
-    fn handle_trade_tick(&mut self, trade: &TradeTick) {
+    fn handle_trade(&mut self, trade: &TradeTick) {
         self.update_raw((&trade.price).into());
     }
 
@@ -97,7 +97,8 @@ fn _get_weights(size: usize) -> Vec<f64> {
 
 impl HullMovingAverage {
     /// Creates a new [`HullMovingAverage`] instance.
-    pub fn new(period: usize, price_type: Option<PriceType>) -> anyhow::Result<Self> {
+    #[must_use]
+    pub fn new(period: usize, price_type: Option<PriceType>) -> Self {
         let period_halved = period / 2;
         let period_sqrt = (period as f64).sqrt() as usize;
 
@@ -105,11 +106,11 @@ impl HullMovingAverage {
         let w2 = _get_weights(period);
         let w3 = _get_weights(period_sqrt);
 
-        let ma1 = WeightedMovingAverage::new(period_halved, w1, price_type)?;
-        let ma2 = WeightedMovingAverage::new(period, w2, price_type)?;
-        let ma3 = WeightedMovingAverage::new(period_sqrt, w3, price_type)?;
+        let ma1 = WeightedMovingAverage::new(period_halved, w1, price_type);
+        let ma2 = WeightedMovingAverage::new(period, w2, price_type);
+        let ma3 = WeightedMovingAverage::new(period_sqrt, w3, price_type);
 
-        Ok(Self {
+        Self {
             period,
             price_type: price_type.unwrap_or(PriceType::Last),
             value: 0.0,
@@ -119,7 +120,7 @@ impl HullMovingAverage {
             ma1,
             ma2,
             ma3,
-        })
+        }
     }
 }
 
@@ -216,14 +217,14 @@ mod tests {
     }
 
     #[rstest]
-    fn test_handle_quote_tick(mut indicator_hma_10: HullMovingAverage, quote_tick: QuoteTick) {
-        indicator_hma_10.handle_quote_tick(&quote_tick);
+    fn test_handle_quote_tick(mut indicator_hma_10: HullMovingAverage, stub_quote: QuoteTick) {
+        indicator_hma_10.handle_quote(&stub_quote);
         assert_eq!(indicator_hma_10.value, 1501.0);
     }
 
     #[rstest]
-    fn test_handle_trade_tick(mut indicator_hma_10: HullMovingAverage, trade_tick: TradeTick) {
-        indicator_hma_10.handle_trade_tick(&trade_tick);
+    fn test_handle_trade_tick(mut indicator_hma_10: HullMovingAverage, stub_trade: TradeTick) {
+        indicator_hma_10.handle_trade(&stub_trade);
         assert_eq!(indicator_hma_10.value, 1500.0);
     }
 

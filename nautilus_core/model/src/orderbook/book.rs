@@ -15,22 +15,25 @@
 
 //! A performant, generic, multi-purpose order book.
 
+use std::fmt::Display;
+
 use nautilus_core::nanos::UnixNanos;
 
 use super::{aggregation::pre_process_order, analysis, display::pprint_book, level::Level};
 use crate::{
     data::{
         delta::OrderBookDelta, deltas::OrderBookDeltas, depth::OrderBookDepth10, order::BookOrder,
+        quote::QuoteTick, trade::TradeTick,
     },
     enums::{BookAction, BookType, OrderSide, OrderSideSpecified},
     identifiers::InstrumentId,
-    orderbook::{error::BookIntegrityError, ladder::Ladder},
+    orderbook::{error::InvalidBookOperation, ladder::Ladder},
     types::{price::Price, quantity::Quantity},
 };
 
-/// Provides a performant, generic, multi-purpose order book.
+/// Provides a high-performance, versatile order book.
 ///
-/// Can handle the following granularity data:
+/// Capable of handling various levels of data granularity:
 /// - MBO (market by order) / L3
 /// - MBP (market by price) / L2 aggregated order per level
 /// - MBP (market by price) / L1 top-of-book only
@@ -40,10 +43,10 @@ use crate::{
     pyo3::pyclass(module = "nautilus_trader.core.nautilus_pyo3.model")
 )]
 pub struct OrderBook {
-    /// The order book type (MBP types will aggregate orders).
-    pub book_type: BookType,
     /// The instrument ID for the order book.
     pub instrument_id: InstrumentId,
+    /// The order book type (MBP types will aggregate orders).
+    pub book_type: BookType,
     /// The last event sequence number for the order book.
     pub sequence: u64,
     /// The timestamp of the last event applied to the order book.
@@ -62,13 +65,25 @@ impl PartialEq for OrderBook {
 
 impl Eq for OrderBook {}
 
+impl Display for OrderBook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}(instrument_id={}, book_type={})",
+            stringify!(OrderBook),
+            self.instrument_id,
+            self.book_type,
+        )
+    }
+}
+
 impl OrderBook {
     /// Creates a new [`OrderBook`] instance.
     #[must_use]
-    pub fn new(book_type: BookType, instrument_id: InstrumentId) -> Self {
+    pub fn new(instrument_id: InstrumentId, book_type: BookType) -> Self {
         Self {
-            book_type,
             instrument_id,
+            book_type,
             sequence: 0,
             ts_last: UnixNanos::default(),
             count: 0,
@@ -223,10 +238,9 @@ impl OrderBook {
 
     #[must_use]
     pub fn get_avg_px_for_quantity(&self, qty: Quantity, order_side: OrderSide) -> f64 {
-        let levels = match order_side {
-            OrderSide::Buy => &self.asks.levels,
-            OrderSide::Sell => &self.bids.levels,
-            _ => panic!("Invalid `OrderSide` {order_side}"),
+        let levels = match order_side.as_specified() {
+            OrderSideSpecified::Buy => &self.asks.levels,
+            OrderSideSpecified::Sell => &self.bids.levels,
         };
 
         analysis::get_avg_px_for_quantity(qty, levels)
@@ -234,10 +248,9 @@ impl OrderBook {
 
     #[must_use]
     pub fn get_quantity_for_price(&self, price: Price, order_side: OrderSide) -> f64 {
-        let levels = match order_side {
-            OrderSide::Buy => &self.asks.levels,
-            OrderSide::Sell => &self.bids.levels,
-            _ => panic!("Invalid `OrderSide` {order_side}"),
+        let levels = match order_side.as_specified() {
+            OrderSideSpecified::Buy => &self.asks.levels,
+            OrderSideSpecified::Sell => &self.bids.levels,
         };
 
         analysis::get_quantity_for_price(price, order_side, levels)
@@ -245,10 +258,9 @@ impl OrderBook {
 
     #[must_use]
     pub fn simulate_fills(&self, order: &BookOrder) -> Vec<(Price, Quantity)> {
-        match order.side {
-            OrderSide::Buy => self.asks.simulate_fills(order),
-            OrderSide::Sell => self.bids.simulate_fills(order),
-            _ => panic!("{}", BookIntegrityError::NoOrderSide),
+        match order.side.as_specified() {
+            OrderSideSpecified::Buy => self.asks.simulate_fills(order),
+            OrderSideSpecified::Sell => self.bids.simulate_fills(order),
         }
     }
 
@@ -262,6 +274,74 @@ impl OrderBook {
         self.sequence = sequence;
         self.ts_last = ts_event;
         self.count += 1;
+    }
+
+    pub fn update_quote_tick(&mut self, quote: &QuoteTick) -> Result<(), InvalidBookOperation> {
+        if self.book_type != BookType::L1_MBP {
+            return Err(InvalidBookOperation::Update(self.book_type));
+        };
+
+        let bid = BookOrder::new(
+            OrderSide::Buy,
+            quote.bid_price,
+            quote.bid_size,
+            OrderSide::Buy as u64,
+        );
+
+        let ask = BookOrder::new(
+            OrderSide::Sell,
+            quote.ask_price,
+            quote.ask_size,
+            OrderSide::Sell as u64,
+        );
+
+        self.update_book_bid(bid, quote.ts_event);
+        self.update_book_ask(ask, quote.ts_event);
+
+        Ok(())
+    }
+
+    pub fn update_trade_tick(&mut self, trade: &TradeTick) -> Result<(), InvalidBookOperation> {
+        if self.book_type != BookType::L1_MBP {
+            return Err(InvalidBookOperation::Update(self.book_type));
+        };
+
+        let bid = BookOrder::new(
+            OrderSide::Buy,
+            trade.price,
+            trade.size,
+            OrderSide::Buy as u64,
+        );
+
+        let ask = BookOrder::new(
+            OrderSide::Sell,
+            trade.price,
+            trade.size,
+            OrderSide::Sell as u64,
+        );
+
+        self.update_book_bid(bid, trade.ts_event);
+        self.update_book_ask(ask, trade.ts_event);
+
+        Ok(())
+    }
+
+    fn update_book_bid(&mut self, order: BookOrder, ts_event: UnixNanos) {
+        if let Some(top_bids) = self.bids.top() {
+            if let Some(top_bid) = top_bids.first() {
+                self.bids.remove(top_bid.order_id, 0, ts_event);
+            }
+        }
+        self.bids.add(order);
+    }
+
+    fn update_book_ask(&mut self, order: BookOrder, ts_event: UnixNanos) {
+        if let Some(top_asks) = self.asks.top() {
+            if let Some(top_ask) = top_asks.first() {
+                self.asks.remove(top_ask.order_id, 0, ts_event);
+            }
+        }
+        self.asks.add(order);
     }
 }
 
@@ -278,18 +358,24 @@ mod tests {
         },
         enums::{AggressorSide, BookType, OrderSide},
         identifiers::{InstrumentId, TradeId},
-        orderbook::{
-            aggregation::{update_book_with_quote_tick, update_book_with_trade_tick},
-            analysis::book_check_integrity,
-            book::OrderBook,
-        },
+        orderbook::{analysis::book_check_integrity, book::OrderBook},
         types::{price::Price, quantity::Quantity},
     };
 
     #[rstest]
+    fn test_display() {
+        let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
+        assert_eq!(
+            book.to_string(),
+            "OrderBook(instrument_id=ETHUSDT-PERP.BINANCE, book_type=L2_MBP)"
+        );
+    }
+
+    #[rstest]
     fn test_best_bid_and_ask_when_nothing_in_book() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         assert_eq!(book.best_bid_price(), None);
         assert_eq!(book.best_ask_price(), None);
@@ -302,7 +388,7 @@ mod tests {
     #[rstest]
     fn test_bid_side_with_one_order() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L3_MBO, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L3_MBO);
         let order1 = BookOrder::new(
             OrderSide::Buy,
             Price::from("1.000"),
@@ -319,7 +405,7 @@ mod tests {
     #[rstest]
     fn test_ask_side_with_one_order() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L3_MBO, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L3_MBO);
         let order = BookOrder::new(
             OrderSide::Sell,
             Price::from("2.000"),
@@ -336,14 +422,14 @@ mod tests {
     #[rstest]
     fn test_spread_with_no_bids_or_asks() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let book = OrderBook::new(BookType::L3_MBO, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L3_MBO);
         assert_eq!(book.spread(), None);
     }
 
     #[rstest]
     fn test_spread_with_bids_and_asks() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L3_MBO, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L3_MBO);
         let bid1 = BookOrder::new(
             OrderSide::Buy,
             Price::from("1.000"),
@@ -365,14 +451,14 @@ mod tests {
     #[rstest]
     fn test_midpoint_with_no_bids_or_asks() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
         assert_eq!(book.midpoint(), None);
     }
 
     #[rstest]
     fn test_midpoint_with_bids_asks() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let bid1 = BookOrder::new(
             OrderSide::Buy,
@@ -395,7 +481,7 @@ mod tests {
     #[rstest]
     fn test_get_price_for_quantity_no_market() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let qty = Quantity::from(1);
 
@@ -406,7 +492,7 @@ mod tests {
     #[rstest]
     fn test_get_quantity_for_price_no_market() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let price = Price::from("1.0");
 
@@ -417,7 +503,7 @@ mod tests {
     #[rstest]
     fn test_get_price_for_quantity() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let ask2 = BookOrder::new(
             OrderSide::Sell,
@@ -463,7 +549,7 @@ mod tests {
     #[rstest]
     fn test_get_quantity_for_price() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let ask3 = BookOrder::new(
             OrderSide::Sell,
@@ -522,7 +608,7 @@ mod tests {
     fn test_apply_depth(stub_depth10: OrderBookDepth10) {
         let depth = stub_depth10;
         let instrument_id = InstrumentId::from("AAPL.XNAS");
-        let mut book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         book.apply_depth(&depth);
 
@@ -535,7 +621,7 @@ mod tests {
     #[rstest]
     fn test_orderbook_creation() {
         let instrument_id = InstrumentId::from("AAPL.XNAS");
-        let book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         assert_eq!(book.instrument_id, instrument_id);
         assert_eq!(book.book_type, BookType::L2_MBP);
@@ -547,7 +633,7 @@ mod tests {
     #[rstest]
     fn test_orderbook_reset() {
         let instrument_id = InstrumentId::from("AAPL.XNAS");
-        let mut book = OrderBook::new(BookType::L1_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L1_MBP);
         book.sequence = 10;
         book.ts_last = 100.into();
         book.count = 3;
@@ -563,7 +649,7 @@ mod tests {
     #[rstest]
     fn test_update_quote_tick_l1() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L1_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L1_MBP);
         let quote = QuoteTick::new(
             InstrumentId::from("ETHUSDT-PERP.BINANCE"),
             Price::from("5000.000"),
@@ -572,10 +658,9 @@ mod tests {
             Quantity::from("99.00000000"),
             0.into(),
             0.into(),
-        )
-        .unwrap();
+        );
 
-        update_book_with_quote_tick(&mut book, &quote).unwrap();
+        book.update_quote_tick(&quote).unwrap();
 
         assert_eq!(book.best_bid_price().unwrap(), quote.bid_price);
         assert_eq!(book.best_ask_price().unwrap(), quote.ask_price);
@@ -586,7 +671,7 @@ mod tests {
     #[rstest]
     fn test_update_trade_tick_l1() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L1_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L1_MBP);
 
         let price = Price::from("15000.000");
         let size = Quantity::from("10.00000000");
@@ -600,7 +685,7 @@ mod tests {
             0.into(),
         );
 
-        update_book_with_trade_tick(&mut book, &trade).unwrap();
+        book.update_trade_tick(&trade).unwrap();
 
         assert_eq!(book.best_bid_price().unwrap(), price);
         assert_eq!(book.best_ask_price().unwrap(), price);
@@ -611,7 +696,7 @@ mod tests {
     #[rstest]
     fn test_check_integrity_when_crossed() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L2_MBP, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
         let ask1 = BookOrder::new(
             OrderSide::Sell,
@@ -634,7 +719,7 @@ mod tests {
     #[rstest]
     fn test_pprint() {
         let instrument_id = InstrumentId::from("ETHUSDT-PERP.BINANCE");
-        let mut book = OrderBook::new(BookType::L3_MBO, instrument_id);
+        let mut book = OrderBook::new(instrument_id, BookType::L3_MBO);
 
         let order1 = BookOrder::new(
             OrderSide::Buy,

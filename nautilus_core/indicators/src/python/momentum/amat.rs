@@ -29,8 +29,8 @@ impl ArcherMovingAveragesTrends {
         slow_period: usize,
         signal_period: usize,
         ma_type: Option<MovingAverageType>,
-    ) -> PyResult<Self> {
-        Self::new(fast_period, slow_period, signal_period, ma_type).map_err(to_pyvalue_err)
+    ) -> Self {
+        Self::new(fast_period, slow_period, signal_period, ma_type)
     }
 
     fn __repr__(&self) -> String {
@@ -94,12 +94,12 @@ impl ArcherMovingAveragesTrends {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

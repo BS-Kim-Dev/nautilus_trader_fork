@@ -124,7 +124,7 @@ class ParquetDataCatalog(BaseDataCatalog):
         fs_storage_options: dict | None = None,
         dataset_kwargs: dict | None = None,
         min_rows_per_group: int = 0,
-        max_rows_per_group: int = 5000,
+        max_rows_per_group: int = 5_000,
         show_query_paths: bool = False,
     ) -> None:
         self.fs_protocol: str = fs_protocol or _DEFAULT_FS_PROTOCOL
@@ -211,7 +211,7 @@ class ParquetDataCatalog(BaseDataCatalog):
                     "Data should be monotonically increasing (or non-decreasing) based on `ts_init`: "
                     f"found {original.ts_init} followed by {sorted_version.ts_init}. "
                     "Consider sorting your data with something like "
-                    "`data.sort(key=lambda x: x.ts_init)` prior to writing to the catalog.",
+                    "`data.sort(key=lambda x: x.ts_init)` prior to writing to the catalog",
                 )
 
         table_or_batch = self.serializer.serialize_batch(data, data_cls=data_cls)
@@ -236,6 +236,7 @@ class ParquetDataCatalog(BaseDataCatalog):
         data_cls: type[Data],
         instrument_id: str | None = None,
         basename_template: str = "part-{i}",
+        mode: str = "overwrite",
         **kwargs: Any,
     ) -> None:
         if isinstance(data[0], CustomData):
@@ -250,6 +251,7 @@ class ParquetDataCatalog(BaseDataCatalog):
                 path=path,
                 fs=self.fs,
                 basename_template=basename_template,
+                mode=mode,
             )
         else:
             # Write parquet file
@@ -261,8 +263,7 @@ class ParquetDataCatalog(BaseDataCatalog):
                 filesystem=self.fs,
                 min_rows_per_group=self.min_rows_per_group,
                 max_rows_per_group=self.max_rows_per_group,
-                **self.dataset_kwargs,
-                **kwargs,
+                **kw,
             )
 
     def _fast_write(
@@ -271,20 +272,43 @@ class ParquetDataCatalog(BaseDataCatalog):
         path: str,
         fs: fsspec.AbstractFileSystem,
         basename_template: str,
+        mode: str = "overwrite",
     ) -> None:
         name = basename_template.format(i=0)
         fs.mkdirs(path, exist_ok=True)
-        pq.write_table(
-            table,
-            where=f"{path}/{name}.parquet",
-            filesystem=fs,
-            row_group_size=self.max_rows_per_group,
-        )
+        parquet_file = f"{path}/{name}.parquet"
+
+        # following solution from https://stackoverflow.com/a/70817689
+        if mode != "overwrite" and Path(parquet_file).exists():
+            existing_table = pq.read_table(source=parquet_file, pre_buffer=False, memory_map=True)
+
+            with pq.ParquetWriter(
+                where=parquet_file,
+                schema=existing_table.schema,
+                filesystem=fs,
+                write_batch_size=self.max_rows_per_group,
+            ) as pq_writer:
+                table = table.cast(existing_table.schema)
+
+                if mode == "append":
+                    pq_writer.write_table(existing_table)
+                    pq_writer.write_table(table)
+                elif mode == "prepend":
+                    pq_writer.write_table(table)
+                    pq_writer.write_table(existing_table)
+        else:
+            pq.write_table(
+                table,
+                where=parquet_file,
+                filesystem=fs,
+                row_group_size=self.max_rows_per_group,
+            )
 
     def write_data(
         self,
         data: list[Data | Event] | list[NautilusRustDataType],
         basename_template: str = "part-{i}",
+        mode: str = "overwrite",
         **kwargs: Any,
     ) -> None:
         """
@@ -303,6 +327,13 @@ class ParquetDataCatalog(BaseDataCatalog):
             The token '{i}' will be replaced with an automatically incremented
             integer as files are partitioned.
             If not specified, it defaults to 'part-{i}' + the default extension '.parquet'.
+        mode : str, optional
+            The mode to use when writing data and when not using using the "partitioning" option.
+            Can be one of the following:
+            - "append": Appends the data to the existing data.
+            - "prepend": Prepends the data to the existing data.
+            - "overwrite": Overwrites the existing data.
+            If not specified, it defaults to "overwrite".
         kwargs : Any
             Additional keyword arguments to be passed to the `write_chunk` method.
 
@@ -352,6 +383,7 @@ class ParquetDataCatalog(BaseDataCatalog):
                 data_cls=name_to_cls[cls_name],
                 instrument_id=instrument_id,
                 basename_template=basename_template,
+                mode=mode,
                 **kwargs,
             )
 
@@ -369,6 +401,7 @@ class ParquetDataCatalog(BaseDataCatalog):
     ) -> list[Data | CustomData]:
         if self.fs_protocol == "file" and data_cls in (
             OrderBookDelta,
+            OrderBookDeltas,
             OrderBookDepth10,
             QuoteTick,
             TradeTick,
@@ -418,8 +451,6 @@ class ParquetDataCatalog(BaseDataCatalog):
 
         if session is None:
             session = DataBackendSession()
-        if session is None:
-            raise ValueError("`session` was `None` when a value was expected")
 
         file_prefix = class_to_filename(data_cls)
         glob_path = f"{self.path}/data/{file_prefix}/**/*"
@@ -471,8 +502,9 @@ class ParquetDataCatalog(BaseDataCatalog):
         where: str | None = None,
         **kwargs: Any,
     ) -> list[Data]:
+        query_data_cls = OrderBookDelta if data_cls == OrderBookDeltas else data_cls
         session = self.backend_session(
-            data_cls=data_cls,
+            data_cls=query_data_cls,
             instrument_ids=instrument_ids,
             bar_types=bar_types,
             start=start,
@@ -487,6 +519,11 @@ class ParquetDataCatalog(BaseDataCatalog):
         data = []
         for chunk in result:
             data.extend(capsule_to_list(chunk))
+
+        if data_cls == OrderBookDeltas:
+            # Batch process deltas into `OrderBookDeltas`,
+            # will warn when there are deltas after the final `F_LAST` flag.
+            data = OrderBookDeltas.batch(data)
 
         return data
 
@@ -585,6 +622,7 @@ class ParquetDataCatalog(BaseDataCatalog):
         if conditions:
             query += f" WHERE {' AND '.join(conditions)}"
 
+        query += " ORDER BY ts_init"
         return query
 
     @staticmethod
@@ -731,6 +769,7 @@ class ParquetDataCatalog(BaseDataCatalog):
         # Non-instrument feather files
         for fn in self.fs.glob(f"{prefix}/*.feather"):
             cls_name = fn.replace(prefix + "/", "").replace(".feather", "")
+            cls_name = "_".join(cls_name.split("_")[:-1])
             yield FeatherFile(path=fn, class_name=cls_name)
 
         # Per-instrument feather files
@@ -756,14 +795,20 @@ class ParquetDataCatalog(BaseDataCatalog):
         instance_id: UUID4,
         data_cls: type,
         other_catalog: ParquetDataCatalog | None = None,
+        **kwargs: Any,
     ) -> None:
         table_name = class_to_filename(data_cls)
-        feather_file = Path(self.path) / "backtest" / instance_id / f"{table_name}.feather"
+        feather_dir = Path(self.path) / "backtest" / instance_id
+        feather_files = sorted(feather_dir.glob(f"{table_name}_*.feather"))
 
-        feather_table = self._read_feather_file(feather_file)
-        custom_data_list = self._handle_table_nautilus(feather_table, data_cls)
+        all_data = []
+        for feather_file in feather_files:
+            feather_table = self._read_feather_file(str(feather_file))
+            if feather_table is not None:
+                custom_data_list = self._handle_table_nautilus(feather_table, data_cls)
+                all_data.extend(custom_data_list)
 
-        if other_catalog is not None:
-            other_catalog.write_data(custom_data_list)
-        else:
-            self.write_data(custom_data_list)
+        all_data.sort(key=lambda x: x.ts_init)
+
+        used_catalog = self if other_catalog is None else other_catalog
+        used_catalog.write_data(all_data, **kwargs)

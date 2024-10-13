@@ -7,8 +7,13 @@ cdef extern from "../includes/model.h":
 
     const uintptr_t DEPTH10_LEN # = 10
 
+    # The maximum length of ASCII characters for a `TradeId` string value (including null terminator).
+    const uintptr_t TRADE_ID_LEN # = 37
+
+    # The maximum fixed-point precision.
     const uint8_t FIXED_PRECISION # = 9
 
+    # The scalar value corresponding to the maximum precision (10^9).
     const double FIXED_SCALAR # = 1000000000.0
 
     # The maximum valid money amount which can be represented.
@@ -146,6 +151,8 @@ cdef extern from "../includes/model.h":
         WARRANT # = 10,
         # A warrant instrument class. A derivative that gives the holder the right, but not the obligation, to buy or sell a security—most commonly an equity—at a certain price before expiration.
         SPORTS_BETTING # = 11,
+        # A binary option instrument class. A type of derivative where the payoff is either a fixed monetary amount or nothing, based on a yes/no proposition about an underlying event.
+        BINARY_OPTION # = 12,
 
     # The type of event for an instrument close.
     cpdef enum InstrumentCloseType:
@@ -327,7 +334,7 @@ cdef extern from "../includes/model.h":
         BID # = 1,
         # A quoted order price where a seller is willing to sell a quantity of an instrument.
         ASK # = 2,
-        # The midpoint between the bid and ask prices.
+        # The midpoint between the best bid and best ask prices.
         MID # = 3,
         # The last price at which a trade was made for an instrument.
         LAST # = 4,
@@ -349,13 +356,13 @@ cdef extern from "../includes/model.h":
 
     # The 'Time in Force' instruction for an order.
     cpdef enum TimeInForce:
-        # Good Till Canceled (GTC) - the order remains active until canceled.
+        # Good-Till-Canceled (GTC) - the order remains active until canceled.
         GTC # = 1,
-        # Immediate or Cancel (IOC) - the order is filled as much as possible, the rest is canceled.
+        # Immediate-Or-Cancel (IOC) - the order is filled as much as possible, the rest is canceled.
         IOC # = 2,
-        # Fill or Kill (FOK) - the order must be executed in full immediately, or it is canceled.
+        # Fill-Or-Kill (FOK) - the order must be executed in full immediately, or it is canceled.
         FOK # = 3,
-        # Good Till Date/Time (GTD) - the order is active until a specified date or time.
+        # Good-Till-Date/Time (GTD) - the order is active until a specified date or time.
         GTD # = 4,
         # Day - the order is active until the end of the current trading session.
         DAY # = 5,
@@ -416,9 +423,9 @@ cdef extern from "../includes/model.h":
     cdef struct Level:
         pass
 
-    # Provides a performant, generic, multi-purpose order book.
+    # Provides a high-performance, versatile order book.
     #
-    # Can handle the following granularity data:
+    # Capable of handling various levels of data granularity:
     # - MBO (market by order) / L3
     # - MBP (market by price) / L2 aggregated order per level
     # - MBP (market by price) / L1 top-of-book only
@@ -453,12 +460,38 @@ cdef extern from "../includes/model.h":
         # The instruments trading venue.
         Venue_t venue;
 
+    # Represents a price in a market.
+    #
+    # The number of decimal places may vary. For certain asset classes, prices may
+    # have negative values. For example, prices for options instruments can be
+    # negative under certain conditions.
+    #
+    # Handles up to 9 decimals of precision.
+    #
+    #  - `PRICE_MAX` = 9_223_372_036
+    #  - `PRICE_MIN` = -9_223_372_036
     cdef struct Price_t:
+        # The raw price as a signed 64-bit integer.
+        # Represents the unscaled value, with `precision` defining the number of decimal places.
         int64_t raw;
+        # The number of decimal places, with a maximum precision of 9.
         uint8_t precision;
 
+    # Represents a quantity with a non-negative value.
+    #
+    # Capable of storing either a whole number (no decimal places) of 'contracts'
+    # or 'shares' (instruments denominated in whole units) or a decimal value
+    # containing decimal places for instruments denominated in fractional units.
+    #
+    # Handles up to 9 decimals of precision.
+    #
+    # - `QUANTITY_MAX` = 18_446_744_073
+    # - `QUANTITY_MIN` = 0
     cdef struct Quantity_t:
+        # The raw quantity as an unsigned 64-bit integer.
+        # Represents the unscaled value, with `precision` defining the number of decimal places.
         uint64_t raw;
+        # The number of decimal places, with a maximum precision of 9.
         uint8_t precision;
 
     # Represents an order in a book.
@@ -551,7 +584,7 @@ cdef extern from "../includes/model.h":
     # Can correspond to the `TradeID <1003> field` of the FIX protocol.
     cdef struct TradeId_t:
         # The trade match ID value as a fixed-length C string byte array (includes null terminator).
-        uint8_t value[37];
+        uint8_t value[TRADE_ID_LEN];
 
     # Represents a single trade tick in a market.
     cdef struct TradeTick_t:
@@ -582,13 +615,36 @@ cdef extern from "../includes/model.h":
 
     # Represents a bar type including the instrument ID, bar specification and
     # aggregation source.
-    cdef struct BarType_t:
-        # The bar types instrument ID.
+    cpdef enum BarType_t_Tag:
+        STANDARD,
+        COMPOSITE,
+
+    cdef struct Standard_Body:
+        # The bar type's instrument ID.
         InstrumentId_t instrument_id;
-        # The bar types specification.
+        # The bar type's specification.
         BarSpecification_t spec;
-        # The bar types aggregation source.
+        # The bar type's aggregation source.
         AggregationSource aggregation_source;
+
+    cdef struct Composite_Body:
+        # The bar type's instrument ID.
+        InstrumentId_t instrument_id;
+        # The bar type's specification.
+        BarSpecification_t spec;
+        # The bar type's aggregation source.
+        AggregationSource aggregation_source;
+        # The composite step for binning samples for bar aggregation.
+        uintptr_t composite_step;
+        # The composite type of bar aggregation.
+        uint8_t composite_aggregation;
+        # The composite bar type's aggregation source.
+        AggregationSource composite_aggregation_source;
+
+    cdef struct BarType_t:
+        BarType_t_Tag tag;
+        Standard_Body STANDARD;
+        Composite_Body COMPOSITE;
 
     # Represents an aggregated bar.
     cdef struct Bar_t:
@@ -767,17 +823,33 @@ cdef extern from "../includes/model.h":
     cdef struct Level_API:
         Level *_0;
 
+    # Represents a medium of exchange in a specified denomination with a fixed decimal precision.
+    #
+    # Handles up to 9 decimals of precision.
     cdef struct Currency_t:
+        # The currency code as an alpha-3 string (e.g., "USD", "EUR").
         char* code;
+        # The currency decimal precision.
         uint8_t precision;
+        # The currency code (ISO 4217).
         uint16_t iso4217;
+        # The full name of the currency.
         char* name;
+        # The currency type, indicating its category (e.g. Fiat, Crypto).
         CurrencyType currency_type;
 
+    # Represents an amount of money in a specified currency denomination.
+    #
+    # - `MONEY_MAX` = 9_223_372_036
+    # - `MONEY_MIN` = -9_223_372_036
     cdef struct Money_t:
+        # The raw monetary amount as a signed 64-bit integer.
+        # Represents the unscaled amount, with `currency.precision` defining the number of decimal places.
         int64_t raw;
+        # The currency denomination associated with the monetary amount.
         Currency_t currency;
 
+    # Represents a NULL book order (used with the `Clear` action or where an order is not specified).
     const BookOrder_t NULL_ORDER # = <BookOrder_t>{ OrderSide_NoOrderSide, <Price_t>{ 0, 0 }, <Quantity_t>{ 0, 0 }, 0 }
 
     # The sentinel `Price` representing errors (this will be removed when Cython is gone).
@@ -809,6 +881,27 @@ cdef extern from "../includes/model.h":
     BarType_t bar_type_new(InstrumentId_t instrument_id,
                            BarSpecification_t spec,
                            uint8_t aggregation_source);
+
+    BarType_t bar_type_new_composite(InstrumentId_t instrument_id,
+                                     BarSpecification_t spec,
+                                     AggregationSource aggregation_source,
+                                     uintptr_t composite_step,
+                                     uint8_t composite_aggregation,
+                                     AggregationSource composite_aggregation_source);
+
+    uint8_t bar_type_is_standard(const BarType_t *bar_type);
+
+    uint8_t bar_type_is_composite(const BarType_t *bar_type);
+
+    BarType_t bar_type_standard(const BarType_t *bar_type);
+
+    BarType_t bar_type_composite(const BarType_t *bar_type);
+
+    InstrumentId_t bar_type_instrument_id(const BarType_t *bar_type);
+
+    BarSpecification_t bar_type_spec(const BarType_t *bar_type);
+
+    AggregationSource bar_type_aggregation_source(const BarType_t *bar_type);
 
     # Returns any [`BarType`] parsing error from the provided C string pointer.
     #
@@ -971,7 +1064,7 @@ cdef extern from "../includes/model.h":
     uint64_t quote_tick_hash(const QuoteTick_t *delta);
 
     # Returns a [`QuoteTick`] as a C string pointer.
-    const char *quote_tick_to_cstr(const QuoteTick_t *tick);
+    const char *quote_tick_to_cstr(const QuoteTick_t *quote);
 
     TradeTick_t trade_tick_new(InstrumentId_t instrument_id,
                                int64_t price_raw,
@@ -988,7 +1081,7 @@ cdef extern from "../includes/model.h":
     uint64_t trade_tick_hash(const TradeTick_t *delta);
 
     # Returns a [`TradeTick`] as a C string pointer.
-    const char *trade_tick_to_cstr(const TradeTick_t *tick);
+    const char *trade_tick_to_cstr(const TradeTick_t *trade);
 
     const char *account_type_to_cstr(AccountType value);
 
@@ -1391,6 +1484,12 @@ cdef extern from "../includes/model.h":
 
     uint64_t symbol_hash(const Symbol_t *id);
 
+    uint8_t symbol_is_composite(const Symbol_t *id);
+
+    const char *symbol_root(const Symbol_t *id);
+
+    const char *symbol_topic(const Symbol_t *id);
+
     # Returns a Nautilus identifier from a C string pointer.
     #
     # # Safety
@@ -1562,15 +1661,17 @@ cdef extern from "../includes/model.h":
     #
     # # Panics
     #
-    # If book type is not `L1_MBP`.
+    # This function panics:
+    # - If book type is not `L1_MBP`.
     void orderbook_update_quote_tick(OrderBook_API *book, const QuoteTick_t *quote);
 
     # Updates the order book with a trade tick.
     #
     # # Panics
     #
-    # If book type is not `L1_MBP`.
-    void orderbook_update_trade_tick(OrderBook_API *book, const TradeTick_t *tick);
+    # This function panics:
+    # - If book type is not `L1_MBP`.
+    void orderbook_update_trade_tick(OrderBook_API *book, const TradeTick_t *trade);
 
     CVec orderbook_simulate_fills(const OrderBook_API *book, BookOrder_t order);
 

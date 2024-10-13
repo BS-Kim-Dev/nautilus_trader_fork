@@ -70,15 +70,15 @@ impl Indicator for BollingerBands {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, tick: &QuoteTick) {
-        let bid = tick.bid_price.raw as f64;
-        let ask = tick.ask_price.raw as f64;
+    fn handle_quote(&mut self, quote: &QuoteTick) {
+        let bid = quote.bid_price.raw as f64;
+        let ask = quote.ask_price.raw as f64;
         let mid = (bid + ask) / 2.0;
         self.update_raw(ask, bid, mid);
     }
 
-    fn handle_trade_tick(&mut self, tick: &TradeTick) {
-        let price = tick.price.raw as f64;
+    fn handle_trade(&mut self, trade: &TradeTick) {
+        let price = trade.price.raw as f64;
         self.update_raw(price, price, price);
     }
 
@@ -99,8 +99,9 @@ impl Indicator for BollingerBands {
 
 impl BollingerBands {
     /// Creates a new [`BollingerBands`] instance.
-    pub fn new(period: usize, k: f64, ma_type: Option<MovingAverageType>) -> anyhow::Result<Self> {
-        Ok(Self {
+    #[must_use]
+    pub fn new(period: usize, k: f64, ma_type: Option<MovingAverageType>) -> Self {
+        Self {
             period,
             k,
             ma_type: ma_type.unwrap_or(MovingAverageType::Simple),
@@ -111,7 +112,7 @@ impl BollingerBands {
             lower: 0.0,
             ma: MovingAverageFactory::create(ma_type.unwrap_or(MovingAverageType::Simple), period),
             prices: VecDeque::with_capacity(period),
-        })
+        }
     }
 
     pub fn update_raw(&mut self, high: f64, low: f64, close: f64) {

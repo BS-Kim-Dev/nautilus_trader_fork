@@ -23,20 +23,15 @@ use crate::{
     },
     enums::{BookType, OrderSide},
     identifiers::InstrumentId,
-    orderbook::{
-        aggregation::{update_book_with_quote_tick, update_book_with_trade_tick},
-        analysis::book_check_integrity,
-        book::OrderBook,
-        level::Level,
-    },
+    orderbook::{analysis::book_check_integrity, book::OrderBook, level::Level},
     types::{price::Price, quantity::Quantity},
 };
 
 #[pymethods]
 impl OrderBook {
     #[new]
-    fn py_new(book_type: BookType, instrument_id: InstrumentId) -> Self {
-        Self::new(book_type, instrument_id)
+    fn py_new(instrument_id: InstrumentId, book_type: BookType) -> Self {
+        Self::new(instrument_id, book_type)
     }
 
     fn __repr__(&self) -> String {
@@ -217,11 +212,11 @@ impl OrderBook {
 #[pyfunction()]
 #[pyo3(name = "update_book_with_quote_tick")]
 pub fn py_update_book_with_quote_tick(book: &mut OrderBook, quote: &QuoteTick) -> PyResult<()> {
-    update_book_with_quote_tick(book, quote).map_err(to_pyvalue_err)
+    book.update_quote_tick(quote).map_err(to_pyvalue_err)
 }
 
 #[pyfunction()]
 #[pyo3(name = "update_book_with_trade_tick")]
 pub fn py_update_book_with_trade_tick(book: &mut OrderBook, trade: &TradeTick) -> PyResult<()> {
-    update_book_with_trade_tick(book, trade).map_err(to_pyvalue_err)
+    book.update_trade_tick(trade).map_err(to_pyvalue_err)
 }

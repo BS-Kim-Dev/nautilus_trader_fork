@@ -59,11 +59,11 @@ impl Indicator for ChandeMomentumOscillator {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn handle_quote(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
-    fn handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn handle_trade(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 
@@ -82,8 +82,9 @@ impl Indicator for ChandeMomentumOscillator {
 
 impl ChandeMomentumOscillator {
     /// Creates a new [`ChandeMomentumOscillator`] instance.
-    pub fn new(period: usize, ma_type: Option<MovingAverageType>) -> anyhow::Result<Self> {
-        Ok(Self {
+    #[must_use]
+    pub fn new(period: usize, ma_type: Option<MovingAverageType>) -> Self {
+        Self {
             period,
             ma_type: ma_type.unwrap_or(MovingAverageType::Wilder),
             average_gain: MovingAverageFactory::create(MovingAverageType::Wilder, period),
@@ -93,7 +94,7 @@ impl ChandeMomentumOscillator {
             count: 0,
             initialized: false,
             has_inputs: false,
-        })
+        }
     }
 
     pub fn update_raw(&mut self, close: f64) {
@@ -200,8 +201,8 @@ mod tests {
     }
 
     #[rstest]
-    fn test_handle_quote_tick(mut cmo_10: ChandeMomentumOscillator, quote_tick: QuoteTick) {
-        cmo_10.handle_quote_tick(&quote_tick);
+    fn test_handle_quote_tick(mut cmo_10: ChandeMomentumOscillator, stub_quote: QuoteTick) {
+        cmo_10.handle_quote(&stub_quote);
         assert_eq!(cmo_10.count, 0);
         assert_eq!(cmo_10.value, 0.0);
     }

@@ -20,11 +20,11 @@ use rust_decimal::prelude::ToPrimitive;
 
 use crate::{
     data::order::BookOrder,
-    enums::{LiquiditySide, OrderSide},
+    enums::{BookType, LiquiditySide, OrderSide, OrderType},
     identifiers::InstrumentId,
     instruments::{any::InstrumentAny, currency_pair::CurrencyPair, stubs::audusd_sim},
     orderbook::book::OrderBook,
-    orders::stubs::{TestOrderEventStubs, TestOrderStubs},
+    orders::{builder::OrderTestBuilder, stubs::TestOrderEventStubs},
     position::Position,
     types::{money::Money, price::Price, quantity::Quantity},
 };
@@ -60,15 +60,13 @@ pub fn calculate_commission(
 }
 
 #[fixture]
-pub fn test_position_long(audusd_sim: CurrencyPair) -> Position {
+pub fn stub_position_long(audusd_sim: CurrencyPair) -> Position {
     let audusd_sim = InstrumentAny::CurrencyPair(audusd_sim);
-    let order = TestOrderStubs::market_order(
-        audusd_sim.id(),
-        OrderSide::Buy,
-        Quantity::from(1),
-        None,
-        None,
-    );
+    let order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(audusd_sim.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(1))
+        .build();
     let filled = TestOrderEventStubs::order_filled(
         &order,
         &audusd_sim,
@@ -85,15 +83,13 @@ pub fn test_position_long(audusd_sim: CurrencyPair) -> Position {
 }
 
 #[fixture]
-pub fn test_position_short(audusd_sim: CurrencyPair) -> Position {
+pub fn stub_position_short(audusd_sim: CurrencyPair) -> Position {
     let audusd_sim = InstrumentAny::CurrencyPair(audusd_sim);
-    let order = TestOrderStubs::market_order(
-        audusd_sim.id(),
-        OrderSide::Sell,
-        Quantity::from(1),
-        None,
-        None,
-    );
+    let order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(audusd_sim.id())
+        .side(OrderSide::Sell)
+        .quantity(Quantity::from(1))
+        .build();
     let filled = TestOrderEventStubs::order_filled(
         &order,
         &audusd_sim,
@@ -139,7 +135,7 @@ pub fn stub_order_book_mbp(
     size_increment: f64,
     num_levels: usize,
 ) -> OrderBook {
-    let mut book = OrderBook::new(crate::enums::BookType::L2_MBP, instrument_id);
+    let mut book = OrderBook::new(instrument_id, BookType::L2_MBP);
 
     // Generate bids
     for i in 0..num_levels {

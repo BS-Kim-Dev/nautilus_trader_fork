@@ -28,8 +28,8 @@ use crate::{
 #[pymethods]
 impl DoubleExponentialMovingAverage {
     #[new]
-    fn py_new(period: usize, price_type: Option<PriceType>) -> PyResult<Self> {
-        Self::new(period, price_type).map_err(to_pyvalue_err)
+    fn py_new(period: usize, price_type: Option<PriceType>) -> Self {
+        Self::new(period, price_type)
     }
 
     fn __repr__(&self) -> String {
@@ -73,13 +73,13 @@ impl DoubleExponentialMovingAverage {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, tick: &QuoteTick) {
-        self.py_update_raw(tick.extract_price(self.price_type).into());
+    fn py_handle_quote_tick(&mut self, quote: &QuoteTick) {
+        self.py_update_raw(quote.extract_price(self.price_type).into());
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, tick: &TradeTick) {
-        self.update_raw((&tick.price).into());
+    fn py_handle_trade_tick(&mut self, trade: &TradeTick) {
+        self.update_raw((&trade.price).into());
     }
 
     #[pyo3(name = "handle_bar")]

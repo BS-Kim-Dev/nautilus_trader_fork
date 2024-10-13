@@ -28,9 +28,8 @@ impl VolatilityRatio {
         use_previous: Option<bool>,
         value_floor: Option<f64>,
         ma_type: Option<MovingAverageType>,
-    ) -> PyResult<Self> {
+    ) -> Self {
         Self::new(fast_period, slow_period, ma_type, use_previous, value_floor)
-            .map_err(to_pyvalue_err)
     }
 
     fn __repr__(&self) -> String {
@@ -91,12 +90,12 @@ impl VolatilityRatio {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

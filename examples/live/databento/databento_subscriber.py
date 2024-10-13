@@ -44,8 +44,10 @@ from nautilus_trader.trading.strategy import Strategy
 # For correct subscription operation, you must specify all instruments to be immediately
 # subscribed for as part of the data client configuration
 instrument_ids = [
-    InstrumentId.from_str("ESZ4.GLBX"),
-    # InstrumentId.from_str("ES.c.0.GLBX"),
+    InstrumentId.from_str("ES.c.0.GLBX"),
+    # InstrumentId.from_str("ES.FUT.GLBX"),
+    # InstrumentId.from_str("CL.FUT.GLBX"),
+    # InstrumentId.from_str("LO.OPT.GLBX"),
     # InstrumentId.from_str("AAPL.XNAS"),
 ]
 
@@ -56,6 +58,9 @@ config_node = TradingNodeConfig(
     exec_engine=LiveExecEngineConfig(
         reconciliation=False,  # Not applicable
         inflight_check_interval_ms=0,  # Not applicable
+        # snapshot_orders=True,
+        # snapshot_positions=True,
+        # snapshot_positions_interval_secs=5.0,
     ),
     cache=CacheConfig(
         database=DatabaseConfig(),
@@ -72,18 +77,16 @@ config_node = TradingNodeConfig(
     #     use_instance_id=False,
     #     # types_filter=[QuoteTick],
     #     autotrim_mins=30,
+    #     heartbeat_interval_secs=1,
     # ),
-    # heartbeat_interval=1.0,
-    # snapshot_orders=True,
-    # snapshot_positions=True,
-    # snapshot_positions_interval=5.0,
     data_clients={
         DATABENTO: DatabentoDataClientConfig(
             api_key=None,  # 'DATABENTO_API_KEY' env var
             http_gateway=None,
             instrument_provider=InstrumentProviderConfig(load_all=True),
             instrument_ids=instrument_ids,
-            # parent_symbols={"GLBX.MDP3": {"ES.FUT", "ES.OPT"}},
+            parent_symbols={"GLBX.MDP3": {"ES.FUT"}},
+            mbo_subscriptions_delay=10.0,
         ),
     },
     timeout_connection=20.0,
@@ -138,7 +141,6 @@ class DataSubscriber(Strategy):
         for instrument_id in self.instrument_ids:
             # from nautilus_trader.model.enums import BookType
 
-            #
             # self.subscribe_order_book_deltas(
             #     instrument_id=instrument_id,
             #     book_type=BookType.L3_MBO,
@@ -149,7 +151,7 @@ class DataSubscriber(Strategy):
             #     book_type=BookType.L2_MBP,
             #     depth=10,
             #     client_id=DATABENTO_CLIENT_ID,
-            #     interval_ms=100,
+            #     interval_ms=1000,
             # )
 
             self.subscribe_quote_ticks(instrument_id, client_id=DATABENTO_CLIENT_ID)
@@ -222,7 +224,7 @@ class DataSubscriber(Strategy):
         """
         Actions to be performed when an order book update is received.
         """
-        self.log.info("\n" + order_book.pprint(10), LogColor.CYAN)
+        self.log.info(f"\n{order_book.instrument_id}\n{order_book.pprint(10)}", LogColor.CYAN)
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
         """

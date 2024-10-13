@@ -21,6 +21,7 @@
 
 use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 
+use chrono::TimeDelta;
 use nautilus_common::{cache::Cache, msgbus::MessageBus};
 use nautilus_core::{nanos::UnixNanos, time::AtomicTime, uuid::UUID4};
 use nautilus_execution::matching_core::OrderMatchingCore;
@@ -28,10 +29,13 @@ use nautilus_model::{
     data::{
         bar::{Bar, BarType},
         delta::OrderBookDelta,
+        deltas::OrderBookDeltas,
+        quote::QuoteTick,
+        trade::TradeTick,
     },
     enums::{
-        AccountType, BookType, ContingencyType, LiquiditySide, MarketStatus, OmsType, OrderSide,
-        OrderStatus, OrderType,
+        AccountType, AggregationSource, AggressorSide, BookType, ContingencyType, LiquiditySide,
+        MarketStatus, OmsType, OrderSide, OrderStatus, OrderType, PriceType,
     },
     events::order::{
         OrderAccepted, OrderCancelRejected, OrderCanceled, OrderEventAny, OrderExpired,
@@ -53,6 +57,8 @@ use nautilus_model::{
 };
 use ustr::Ustr;
 
+use crate::models::fill::FillModel;
+
 /// Configuration for [`OrderMatchingEngine`] instances.
 #[derive(Debug, Clone)]
 pub struct OrderMatchingEngineConfig {
@@ -66,7 +72,8 @@ pub struct OrderMatchingEngineConfig {
 }
 
 impl OrderMatchingEngineConfig {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         bar_execution: bool,
         reject_stop_orders: bool,
         support_gtd_orders: bool,
@@ -76,9 +83,9 @@ impl OrderMatchingEngineConfig {
         use_reduce_only: bool,
     ) -> Self {
         Self {
-            support_gtd_orders,
             bar_execution,
             reject_stop_orders,
+            support_gtd_orders,
             support_contingent_orders,
             use_position_ids,
             use_random_ids,
@@ -125,13 +132,14 @@ pub struct OrderMatchingEngine {
     cache: Rc<RefCell<Cache>>,
     book: OrderBook,
     core: OrderMatchingCore,
+    fill_model: FillModel,
     target_bid: Option<Price>,
     target_ask: Option<Price>,
     target_last: Option<Price>,
     last_bar_bid: Option<Bar>,
     last_bar_ask: Option<Bar>,
     execution_bar_types: HashMap<InstrumentId, BarType>,
-    execution_bar_deltas: HashMap<InstrumentId, u64>,
+    execution_bar_deltas: HashMap<BarType, TimeDelta>,
     account_ids: HashMap<TraderId, AccountId>,
     position_count: usize,
     order_count: usize,
@@ -144,6 +152,7 @@ impl OrderMatchingEngine {
     pub fn new(
         instrument: InstrumentAny,
         raw_id: u32,
+        fill_model: FillModel,
         book_type: BookType,
         oms_type: OmsType,
         account_type: AccountType,
@@ -152,7 +161,7 @@ impl OrderMatchingEngine {
         cache: Rc<RefCell<Cache>>,
         config: OrderMatchingEngineConfig,
     ) -> Self {
-        let book = OrderBook::new(book_type, instrument.id());
+        let book = OrderBook::new(instrument.id(), book_type);
         let core = OrderMatchingCore::new(
             instrument.id(),
             instrument.price_increment(),
@@ -164,6 +173,7 @@ impl OrderMatchingEngine {
             venue: instrument.id().venue,
             instrument,
             raw_id,
+            fill_model,
             book_type,
             oms_type,
             account_type,
@@ -204,6 +214,10 @@ impl OrderMatchingEngine {
         log::info!("Reset {}", self.instrument.id());
     }
 
+    pub fn set_fill_model(&mut self, fill_model: FillModel) {
+        self.fill_model = fill_model;
+    }
+
     #[must_use]
     pub fn best_bid_price(&self) -> Option<Price> {
         self.book.best_bid_price()
@@ -230,6 +244,15 @@ impl OrderMatchingEngine {
     }
 
     #[must_use]
+    pub fn get_open_orders(&self) -> Vec<PassiveOrderAny> {
+        // get orders from both open bid orders and open ask orders
+        let mut orders = Vec::new();
+        orders.extend_from_slice(self.core.get_orders_bid());
+        orders.extend_from_slice(self.core.get_orders_ask());
+        orders
+    }
+
+    #[must_use]
     pub fn order_exists(&self, client_order_id: ClientOrderId) -> bool {
         self.core.order_exists(client_order_id)
     }
@@ -240,7 +263,226 @@ impl OrderMatchingEngine {
     pub fn process_order_book_delta(&mut self, delta: &OrderBookDelta) {
         log::debug!("Processing {delta}");
 
-        self.book.apply_delta(delta);
+        if self.book_type == BookType::L2_MBP || self.book_type == BookType::L3_MBO {
+            self.book.apply_delta(delta);
+        }
+
+        self.iterate(delta.ts_event);
+    }
+
+    pub fn process_order_book_deltas(&mut self, deltas: &OrderBookDeltas) {
+        log::debug!("Processing {deltas}");
+
+        if self.book_type == BookType::L2_MBP || self.book_type == BookType::L3_MBO {
+            self.book.apply_deltas(deltas);
+        }
+
+        self.iterate(deltas.ts_event);
+    }
+
+    pub fn process_quote_tick(&mut self, quote: &QuoteTick) {
+        log::debug!("Processing {quote}");
+
+        if self.book_type == BookType::L1_MBP {
+            self.book.update_quote_tick(quote).unwrap();
+        }
+
+        self.iterate(quote.ts_event);
+    }
+
+    pub fn process_bar(&mut self, bar: &Bar) {
+        log::debug!("Processing {bar}");
+
+        // check if configured for bar execution
+        // can only process an L1 book with bars
+        if !self.config.bar_execution || self.book_type != BookType::L1_MBP {
+            return;
+        }
+
+        let bar_type = bar.bar_type;
+        // do not process internally aggregated bars
+        if bar_type.aggregation_source() == AggregationSource::Internal {
+            return;
+        }
+
+        let execution_bar_type =
+            if let Some(execution_bar_type) = self.execution_bar_types.get(&bar.instrument_id()) {
+                execution_bar_type.to_owned()
+            } else {
+                self.execution_bar_types
+                    .insert(bar.instrument_id(), bar_type);
+                self.execution_bar_deltas
+                    .insert(bar_type, bar_type.spec().timedelta());
+                bar_type
+            };
+
+        if execution_bar_type != bar_type {
+            let mut bar_type_timedelta = self.execution_bar_deltas.get(&bar_type).copied();
+            if bar_type_timedelta.is_none() {
+                bar_type_timedelta = Some(bar_type.spec().timedelta());
+                self.execution_bar_deltas
+                    .insert(bar_type, bar_type_timedelta.unwrap());
+            }
+            if self.execution_bar_deltas.get(&execution_bar_type).unwrap()
+                >= &bar_type_timedelta.unwrap()
+            {
+                self.execution_bar_types
+                    .insert(bar_type.instrument_id(), bar_type);
+            } else {
+                return;
+            }
+        }
+
+        match bar_type.spec().price_type {
+            PriceType::Last | PriceType::Mid => self.process_trade_ticks_from_bar(bar),
+            PriceType::Bid => {
+                self.last_bar_bid = Some(bar.to_owned());
+                self.process_quote_ticks_from_bar(bar);
+            }
+            PriceType::Ask => {
+                self.last_bar_ask = Some(bar.to_owned());
+                self.process_quote_ticks_from_bar(bar);
+            }
+        }
+    }
+
+    fn process_trade_ticks_from_bar(&mut self, bar: &Bar) {
+        // split the bar into 4 trade ticks with quarter volume
+        let size = Quantity::new(bar.volume.as_f64() / 4.0, bar.volume.precision);
+
+        let aggressor_side = if !self.core.is_last_initialized || bar.open > self.core.last.unwrap()
+        {
+            AggressorSide::Buyer
+        } else {
+            AggressorSide::Seller
+        };
+
+        // create reusable trade tick
+        let mut trade_tick = TradeTick::new(
+            bar.instrument_id(),
+            bar.open,
+            size,
+            aggressor_side,
+            self.generate_trade_id(),
+            bar.ts_event,
+            bar.ts_event,
+        );
+
+        // open
+        // check if not initialized, if it is, it will be updated by the close or last
+        if !self.core.is_last_initialized {
+            self.book.update_trade_tick(&trade_tick).unwrap();
+            self.iterate(trade_tick.ts_init);
+            self.core.set_last_raw(trade_tick.price);
+        }
+
+        // high
+        // check if higher than last
+        if self.core.last.is_some_and(|last| bar.high > last) {
+            trade_tick.price = bar.high;
+            trade_tick.aggressor_side = AggressorSide::Buyer;
+            trade_tick.trade_id = self.generate_trade_id();
+
+            self.book.update_trade_tick(&trade_tick).unwrap();
+            self.iterate(trade_tick.ts_init);
+
+            self.core.set_last_raw(trade_tick.price);
+        }
+
+        // low
+        // check if lower than last
+        // assumption: market traded down, aggressor hitting the bid(setting aggressor to seller)
+        if self.core.last.is_some_and(|last| bar.low < last) {
+            trade_tick.price = bar.low;
+            trade_tick.aggressor_side = AggressorSide::Seller;
+            trade_tick.trade_id = self.generate_trade_id();
+
+            self.book.update_trade_tick(&trade_tick).unwrap();
+            self.iterate(trade_tick.ts_init);
+
+            self.core.set_last_raw(trade_tick.price);
+        }
+
+        // close
+        // check if not the same as last
+        // assumption: if close price is higher then last, aggressor is buyer
+        // assumption: if close price is lower then last, aggressor is seller
+        if self.core.last.is_some_and(|last| bar.close != last) {
+            trade_tick.price = bar.close;
+            trade_tick.aggressor_side = if bar.close > self.core.last.unwrap() {
+                AggressorSide::Buyer
+            } else {
+                AggressorSide::Seller
+            };
+            trade_tick.trade_id = self.generate_trade_id();
+
+            self.book.update_trade_tick(&trade_tick).unwrap();
+            self.iterate(trade_tick.ts_init);
+
+            self.core.set_last_raw(trade_tick.price);
+        }
+    }
+
+    fn process_quote_ticks_from_bar(&mut self, bar: &Bar) {
+        // wait for next bar
+        if self.last_bar_bid.is_none()
+            || self.last_bar_ask.is_none()
+            || self.last_bar_bid.unwrap().ts_event != self.last_bar_ask.unwrap().ts_event
+        {
+            return;
+        }
+        let bid_bar = self.last_bar_bid.unwrap();
+        let ask_bar = self.last_bar_ask.unwrap();
+        let bid_size = Quantity::new(bid_bar.volume.as_f64() / 4.0, bar.volume.precision);
+        let ask_size = Quantity::new(ask_bar.volume.as_f64() / 4.0, bar.volume.precision);
+
+        // create reusable quote tick
+        let mut quote_tick = QuoteTick::new(
+            self.book.instrument_id,
+            bid_bar.open,
+            ask_bar.open,
+            bid_size,
+            ask_size,
+            bid_bar.ts_init,
+            bid_bar.ts_init,
+        );
+
+        // open
+        self.book.update_quote_tick(&quote_tick).unwrap();
+        self.iterate(quote_tick.ts_init);
+
+        // high
+        quote_tick.bid_price = bid_bar.high;
+        quote_tick.ask_price = ask_bar.high;
+        self.book.update_quote_tick(&quote_tick).unwrap();
+        self.iterate(quote_tick.ts_init);
+
+        // low
+        quote_tick.bid_price = bid_bar.low;
+        quote_tick.ask_price = ask_bar.low;
+        self.book.update_quote_tick(&quote_tick).unwrap();
+        self.iterate(quote_tick.ts_init);
+
+        // close
+        quote_tick.bid_price = bid_bar.close;
+        quote_tick.ask_price = ask_bar.close;
+        self.book.update_quote_tick(&quote_tick).unwrap();
+        self.iterate(quote_tick.ts_init);
+
+        // reset last bars
+        self.last_bar_bid = None;
+        self.last_bar_ask = None;
+    }
+
+    pub fn process_trade_tick(&mut self, trade: &TradeTick) {
+        log::debug!("Processing {trade}");
+
+        if self.book_type == BookType::L1_MBP {
+            self.book.update_trade_tick(trade).unwrap();
+        }
+        self.core.set_last_raw(trade.price);
+
+        self.iterate(trade.ts_event);
     }
 
     // -- TRADING COMMANDS ------------------------------------------------------------------------
@@ -314,9 +556,8 @@ impl OrderMatchingEngine {
                             && parent_order.status() == OrderStatus::Triggered
                         {
                             log::info!(
-                                "Pending OTO order {} triggers from {}",
+                                "Pending OTO order {} triggers from {parent_order_id}",
                                 order.client_order_id(),
-                                parent_order_id
                             );
                             return;
                         }
@@ -525,6 +766,16 @@ impl OrderMatchingEngine {
     pub fn iterate(&mut self, timestamp_ns: UnixNanos) {
         self.clock.set_time(timestamp_ns);
 
+        // check for updates in orderbook and set bid and ask
+        // in order matching core and iterate
+        if self.book.has_bid() {
+            self.core.set_bid_raw(self.book.best_bid_price().unwrap());
+        }
+        if self.book.has_ask() {
+            self.core.set_ask_raw(self.book.best_ask_price().unwrap());
+        }
+        self.core.iterate();
+
         self.core.bid = self.book.best_bid_price();
         self.core.ask = self.book.best_ask_price();
 
@@ -670,21 +921,18 @@ impl OrderMatchingEngine {
             .account_id()
             .unwrap_or(self.account_ids.get(&order.trader_id()).unwrap().to_owned());
 
-        let event = OrderEventAny::Rejected(
-            OrderRejected::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                account_id,
-                reason,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Rejected(OrderRejected::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            account_id,
+            reason,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -694,21 +942,18 @@ impl OrderMatchingEngine {
         let account_id = order
             .account_id()
             .unwrap_or(self.account_ids.get(&order.trader_id()).unwrap().to_owned());
-        let event = OrderEventAny::Accepted(
-            OrderAccepted::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                venue_order_id,
-                account_id,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Accepted(OrderAccepted::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            venue_order_id,
+            account_id,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -725,22 +970,19 @@ impl OrderMatchingEngine {
         reason: Ustr,
     ) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::ModifyRejected(
-            OrderModifyRejected::new(
-                trader_id,
-                strategy_id,
-                instrument_id,
-                client_order_id,
-                reason,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                Some(venue_order_id),
-                Some(account_id),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::ModifyRejected(OrderModifyRejected::new(
+            trader_id,
+            strategy_id,
+            instrument_id,
+            client_order_id,
+            reason,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            Some(venue_order_id),
+            Some(account_id),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -757,22 +999,19 @@ impl OrderMatchingEngine {
         reason: Ustr,
     ) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::CancelRejected(
-            OrderCancelRejected::new(
-                trader_id,
-                strategy_id,
-                instrument_id,
-                client_order_id,
-                reason,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                Some(venue_order_id),
-                Some(account_id),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::CancelRejected(OrderCancelRejected::new(
+            trader_id,
+            strategy_id,
+            instrument_id,
+            client_order_id,
+            reason,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            Some(venue_order_id),
+            Some(account_id),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -785,87 +1024,75 @@ impl OrderMatchingEngine {
         trigger_price: Price,
     ) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::Updated(
-            OrderUpdated::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                quantity,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                order.venue_order_id(),
-                order.account_id(),
-                Some(price),
-                Some(trigger_price),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Updated(OrderUpdated::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            quantity,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            order.venue_order_id(),
+            order.account_id(),
+            Some(price),
+            Some(trigger_price),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
 
     fn generate_order_canceled(&self, order: &OrderAny, venue_order_id: VenueOrderId) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::Canceled(
-            OrderCanceled::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                Some(venue_order_id),
-                order.account_id(),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Canceled(OrderCanceled::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            Some(venue_order_id),
+            order.account_id(),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
 
     fn generate_order_triggered(&self, order: &OrderAny) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::Triggered(
-            OrderTriggered::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                order.venue_order_id(),
-                order.account_id(),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Triggered(OrderTriggered::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            order.venue_order_id(),
+            order.account_id(),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
 
     fn generate_order_expired(&self, order: &OrderAny) {
         let ts_now = self.clock.get_time_ns();
-        let event = OrderEventAny::Expired(
-            OrderExpired::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                order.venue_order_id(),
-                order.account_id(),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Expired(OrderExpired::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            order.venue_order_id(),
+            order.account_id(),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -886,30 +1113,27 @@ impl OrderMatchingEngine {
         let account_id = order
             .account_id()
             .unwrap_or(self.account_ids.get(&order.trader_id()).unwrap().to_owned());
-        let event = OrderEventAny::Filled(
-            OrderFilled::new(
-                order.trader_id(),
-                order.strategy_id(),
-                order.instrument_id(),
-                order.client_order_id(),
-                venue_order_id,
-                account_id,
-                self.generate_trade_id(),
-                order.order_side(),
-                order.order_type(),
-                last_qty,
-                last_px,
-                quote_currency,
-                liquidity_side,
-                UUID4::new(),
-                ts_now,
-                ts_now,
-                false,
-                Some(venue_position_id),
-                Some(commission),
-            )
-            .unwrap(),
-        );
+        let event = OrderEventAny::Filled(OrderFilled::new(
+            order.trader_id(),
+            order.strategy_id(),
+            order.instrument_id(),
+            order.client_order_id(),
+            venue_order_id,
+            account_id,
+            self.generate_trade_id(),
+            order.order_side(),
+            order.order_type(),
+            last_qty,
+            last_px,
+            quote_currency,
+            liquidity_side,
+            UUID4::new(),
+            ts_now,
+            ts_now,
+            false,
+            Some(venue_position_id),
+            Some(commission),
+        ));
         let msgbus = self.msgbus.as_ref().borrow();
         msgbus.send(&msgbus.switchboard.exec_engine_process, &event as &dyn Any);
     }
@@ -931,25 +1155,31 @@ mod tests {
             MessageBus,
         },
     };
-    use nautilus_core::{nanos::UnixNanos, time::AtomicTime, uuid::UUID4};
+    use nautilus_core::{nanos::UnixNanos, time::AtomicTime};
     use nautilus_model::{
-        enums::{AccountType, BookType, ContingencyType, OmsType, OrderSide, TimeInForce},
+        data::{delta::OrderBookDelta, order::BookOrder},
+        enums::{
+            AccountType, BookAction, BookType, ContingencyType, OmsType, OrderSide, OrderType,
+        },
         events::order::{
             rejected::OrderRejectedBuilder, OrderEventAny, OrderEventType, OrderRejected,
         },
-        identifiers::{AccountId, ClientOrderId, StrategyId, TraderId},
+        identifiers::{AccountId, ClientOrderId},
         instruments::{
             any::InstrumentAny,
             equity::Equity,
             stubs::{futures_contract_es, *},
         },
-        orders::{any::OrderAny, market::MarketOrder, stubs::TestOrderStubs},
+        orders::{builder::OrderTestBuilder, stubs::TestOrderStubs},
         types::{price::Price, quantity::Quantity},
     };
     use rstest::{fixture, rstest};
     use ustr::Ustr;
 
-    use crate::matching_engine::{OrderMatchingEngine, OrderMatchingEngineConfig};
+    use crate::{
+        matching_engine::{OrderMatchingEngine, OrderMatchingEngineConfig},
+        models::fill::FillModel,
+    };
 
     static ATOMIC_TIME: LazyLock<AtomicTime> =
         LazyLock::new(|| AtomicTime::new(true, UnixNanos::default()));
@@ -1020,7 +1250,31 @@ mod tests {
         OrderMatchingEngine::new(
             instrument,
             1,
+            FillModel::default(),
             BookType::L1_MBP,
+            OmsType::Netting,
+            account_type.unwrap_or(AccountType::Cash),
+            &ATOMIC_TIME,
+            msgbus,
+            cache,
+            config,
+        )
+    }
+
+    fn get_order_matching_engine_l2(
+        instrument: InstrumentAny,
+        msgbus: Rc<RefCell<MessageBus>>,
+        cache: Option<Rc<RefCell<Cache>>>,
+        account_type: Option<AccountType>,
+        config: Option<OrderMatchingEngineConfig>,
+    ) -> OrderMatchingEngine {
+        let cache = cache.unwrap_or(Rc::new(RefCell::new(Cache::default())));
+        let config = config.unwrap_or_default();
+        OrderMatchingEngine::new(
+            instrument,
+            1,
+            FillModel::default(),
+            BookType::L2_MBP,
             OmsType::Netting,
             account_type.unwrap_or(AccountType::Cash),
             &ATOMIC_TIME,
@@ -1061,13 +1315,12 @@ mod tests {
             None,
             None,
         );
-        let order = TestOrderStubs::market_order(
-            instrument.id(),
-            OrderSide::Buy,
-            Quantity::from("1"),
-            None,
-            None,
-        );
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("1"))
+            .build();
+
         engine.process_order(&order, account_id);
 
         // Get messages and test
@@ -1117,13 +1370,12 @@ mod tests {
             None,
             None,
         );
-        let order = TestOrderStubs::market_order(
-            instrument.id(),
-            OrderSide::Buy,
-            Quantity::from("1"),
-            None,
-            None,
-        );
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("1"))
+            .build();
+
         engine.process_order(&order, account_id);
 
         // Get messages and test
@@ -1159,13 +1411,12 @@ mod tests {
             None,
             None,
         );
-        let order = TestOrderStubs::market_order(
-            instrument_es.id(),
-            OrderSide::Buy,
-            Quantity::from("1.122"), // <- wrong precision for es futures contract (which is 1)x
-            None,
-            None,
-        );
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("1.122"))
+            .build();
+
         engine.process_order(&order, account_id);
 
         // Get messages and test
@@ -1201,14 +1452,13 @@ mod tests {
             None,
             None,
         );
-        let limit_order = TestOrderStubs::limit_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Price::from("100.12333"), // <- wrong price precision for es futures contract (which is 2)
-            Quantity::from("1"),
-            None,
-            None,
-        );
+
+        let limit_order = OrderTestBuilder::new(OrderType::Limit)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .price(Price::from("100.12333")) // <- wrong price precision for es futures contract (which is 2)
+            .quantity(Quantity::from("1"))
+            .build();
 
         engine.process_order(&limit_order, account_id);
 
@@ -1245,18 +1495,12 @@ mod tests {
             None,
             None,
         );
-        let stop_order = TestOrderStubs::stop_market_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Price::from("100.12333"), // <- wrong trigger price precision for es futures contract (which is 2)
-            Quantity::from("1"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let stop_order = OrderTestBuilder::new(OrderType::StopMarket)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .trigger_price(Price::from("100.12333")) // <- wrong trigger price precision for es futures contract (which is 2)
+            .quantity(Quantity::from("1"))
+            .build();
 
         engine.process_order(&stop_order, account_id);
 
@@ -1294,13 +1538,11 @@ mod tests {
             None,
             None,
         );
-        let order = TestOrderStubs::market_order(
-            instrument.id(),
-            OrderSide::Sell,
-            Quantity::from("1"),
-            None,
-            None,
-        );
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument.id())
+            .side(OrderSide::Sell)
+            .quantity(Quantity::from("1"))
+            .build();
 
         engine.process_order(&order, account_id);
 
@@ -1341,13 +1583,12 @@ mod tests {
             None,
             Some(engine_config),
         );
-        let market_order = TestOrderStubs::market_order_reduce(
-            instrument_es.id(),
-            OrderSide::Buy,
-            Quantity::from("1"),
-            None,
-            None,
-        );
+        let market_order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("1"))
+            .reduce_only(true)
+            .build();
 
         engine.process_order(&market_order, account_id);
 
@@ -1390,30 +1631,13 @@ mod tests {
         let stop_loss_client_order_id = ClientOrderId::from("O-19700101-000000-001-001-2");
 
         // Create entry market order
-        let mut entry_order = OrderAny::Market(
-            MarketOrder::new(
-                TraderId::default(),
-                StrategyId::default(),
-                instrument_es.id(),
-                entry_client_order_id,
-                OrderSide::Buy,
-                Quantity::from("1"),
-                TimeInForce::Gtc,
-                UUID4::new(),
-                UnixNanos::default(),
-                false,
-                false,
-                Some(ContingencyType::Oto), // <- set contingency type to OTO
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap(),
-        );
+        let mut entry_order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from(1))
+            .contingency_type(ContingencyType::Oto)
+            .client_order_id(entry_client_order_id)
+            .build();
         // Set entry order status to Rejected with proper event
         let rejected_event = OrderRejected::default();
         entry_order
@@ -1421,18 +1645,15 @@ mod tests {
             .unwrap();
 
         // Create stop loss order
-        let stop_order = TestOrderStubs::stop_market_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Price::from("0.95"),
-            Quantity::from(1),
-            None,
-            Some(ContingencyType::Oto),
-            Some(stop_loss_client_order_id),
-            None,
-            Some(entry_client_order_id),
-            None,
-        );
+        let stop_order = OrderTestBuilder::new(OrderType::StopMarket)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .trigger_price(Price::from("0.95"))
+            .quantity(Quantity::from(1))
+            .contingency_type(ContingencyType::Oto)
+            .client_order_id(stop_loss_client_order_id)
+            .parent_order_id(entry_client_order_id)
+            .build();
         // Make it Accepted
         let accepted_stop_order = TestOrderStubs::make_accepted_order(&stop_order);
 
@@ -1483,29 +1704,24 @@ mod tests {
         let stop_loss_client_order_id = ClientOrderId::from("O-19700101-000000-001-001-2");
         let take_profit_client_order_id = ClientOrderId::from("O-19700101-000000-001-001-3");
         // Create two linked orders: stop loss and take profit
-        let mut stop_loss_order = TestOrderStubs::stop_market_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Price::from("0.95"),
-            Quantity::from(1),
-            None,
-            Some(ContingencyType::Oco),
-            Some(stop_loss_client_order_id),
-            None,
-            None,
-            Some(vec![take_profit_client_order_id]),
-        );
-        let take_profit_order = TestOrderStubs::market_if_touched_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Price::from("1.1"),
-            Quantity::from(1),
-            None,
-            Some(ContingencyType::Oco),
-            Some(take_profit_client_order_id),
-            None,
-            Some(vec![stop_loss_client_order_id]),
-        );
+        let mut stop_loss_order = OrderTestBuilder::new(OrderType::StopMarket)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .trigger_price(Price::from("0.95"))
+            .quantity(Quantity::from(1))
+            .contingency_type(ContingencyType::Oco)
+            .client_order_id(stop_loss_client_order_id)
+            .linked_order_ids(vec![take_profit_client_order_id])
+            .build();
+        let take_profit_order = OrderTestBuilder::new(OrderType::MarketIfTouched)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .trigger_price(Price::from("1.1"))
+            .quantity(Quantity::from(1))
+            .contingency_type(ContingencyType::Oco)
+            .client_order_id(take_profit_client_order_id)
+            .linked_order_ids(vec![stop_loss_client_order_id])
+            .build();
         // Set stop loss order status to Rejected with proper event
         let rejected_event: OrderRejected = OrderRejectedBuilder::default()
             .client_order_id(stop_loss_client_order_id)
@@ -1564,20 +1780,17 @@ mod tests {
             None,
             None,
         );
-        let market_order_buy = TestOrderStubs::market_order(
-            instrument_es.id(),
-            OrderSide::Buy,
-            Quantity::from("1"),
-            None,
-            None,
-        );
-        let market_order_sell = TestOrderStubs::market_order(
-            instrument_es.id(),
-            OrderSide::Sell,
-            Quantity::from("1"),
-            None,
-            None,
-        );
+        let market_order_buy = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("1"))
+            .build();
+        let market_order_sell = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument_es.id())
+            .side(OrderSide::Sell)
+            .quantity(Quantity::from("1"))
+            .build();
+
         engine.process_order(&market_order_buy, account_id);
         engine.process_order(&market_order_sell, account_id);
 
@@ -1596,5 +1809,54 @@ mod tests {
             second.message().unwrap(),
             Ustr::from("No market for ESZ1.GLBX")
         );
+    }
+
+    #[rstest]
+    fn test_matching_core_bid_ask_initialized(
+        msgbus: MessageBus,
+        order_event_handler: ShareableMessageHandler,
+        account_id: AccountId,
+        time: AtomicTime,
+        instrument_es: InstrumentAny,
+    ) {
+        let mut engine_l2 = get_order_matching_engine_l2(
+            instrument_es.clone(),
+            Rc::new(RefCell::new(msgbus)),
+            None,
+            None,
+            None,
+        );
+        // create bid and ask orderbook delta and check if
+        // bid and ask are initialized in order matching core
+        let orderbook_delta_buy = OrderBookDelta::new(
+            instrument_es.id(),
+            BookAction::Add,
+            BookOrder::new(OrderSide::Buy, Price::from("100"), Quantity::from("1"), 0),
+            0,
+            0,
+            UnixNanos::from(0),
+            UnixNanos::from(0),
+        );
+        let orderbook_delta_sell = OrderBookDelta::new(
+            instrument_es.id(),
+            BookAction::Add,
+            BookOrder::new(OrderSide::Sell, Price::from("101"), Quantity::from("1"), 1),
+            0,
+            1,
+            UnixNanos::from(1),
+            UnixNanos::from(1),
+        );
+
+        engine_l2.process_order_book_delta(&orderbook_delta_buy);
+        assert_eq!(engine_l2.core.bid, Some(Price::from("100")));
+        assert!(engine_l2.core.is_bid_initialized);
+        assert_eq!(engine_l2.core.ask, None);
+        assert!(!engine_l2.core.is_ask_initialized);
+
+        engine_l2.process_order_book_delta(&orderbook_delta_sell);
+        assert_eq!(engine_l2.core.bid, Some(Price::from("100")));
+        assert!(engine_l2.core.is_bid_initialized);
+        assert_eq!(engine_l2.core.ask, Some(Price::from("101")));
+        assert!(engine_l2.core.is_ask_initialized);
     }
 }

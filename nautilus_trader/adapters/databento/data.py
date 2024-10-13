@@ -24,7 +24,7 @@ from nautilus_trader.adapters.databento.common import databento_schema_from_naut
 from nautilus_trader.adapters.databento.config import DatabentoDataClientConfig
 from nautilus_trader.adapters.databento.constants import ALL_SYMBOLS
 from nautilus_trader.adapters.databento.constants import DATABENTO
-from nautilus_trader.adapters.databento.constants import PUBLISHERS_PATH
+from nautilus_trader.adapters.databento.constants import PUBLISHERS_FILEPATH
 from nautilus_trader.adapters.databento.enums import DatabentoSchema
 from nautilus_trader.adapters.databento.loaders import DatabentoDataLoader
 from nautilus_trader.adapters.databento.providers import DatabentoInstrumentProvider
@@ -173,7 +173,7 @@ class DatabentoDataClient(LiveMarketDataClient):
                 await asyncio.wait_for(asyncio.gather(*coros), timeout=self._timeout_initial_load)
             else:
                 await asyncio.gather(*coros)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._log.warning("Timeout waiting for instruments")
 
         self._send_all_instruments_to_data_engine()
@@ -181,25 +181,25 @@ class DatabentoDataClient(LiveMarketDataClient):
 
     async def _disconnect(self) -> None:
         if self._buffer_mbo_subscriptions_task:
-            self._log.debug("Canceling `buffer_mbo_subscriptions` task")
+            self._log.debug("Canceling task 'buffer_mbo_subscriptions'")
             self._buffer_mbo_subscriptions_task.cancel()
             self._buffer_mbo_subscriptions_task = None
 
         # Cancel update dataset ranges task
         if self._update_dataset_ranges_task:
-            self._log.debug("Canceling `update_dataset_ranges` task")
+            self._log.debug("Canceling task 'update_dataset_ranges'")
             self._update_dataset_ranges_task.cancel()
             self._update_dataset_ranges_task = None
 
         # Close all live clients
         for dataset, live_client in self._live_clients.items():
-            if not live_client.is_running:
+            if not live_client.is_running():
                 continue
             self._log.info(f"Stopping {dataset} live feed", LogColor.BLUE)
             live_client.close()
 
         for dataset, live_client in self._live_clients_mbo.items():
-            if not live_client.is_running:
+            if not live_client.is_running():
                 continue
             self._log.info(f"Stopping {dataset} MBO/L3 live feed", LogColor.BLUE)
             live_client.close()
@@ -227,7 +227,7 @@ class DatabentoDataClient(LiveMarketDataClient):
             except Exception as e:  # Create specific exception type
                 self._log.error(f"Error updating dataset range: {e}")
             except asyncio.CancelledError:
-                self._log.debug("Canceled `update_dataset_ranges` task")
+                self._log.debug("Canceled task 'update_dataset_ranges'")
                 break
 
     async def _buffer_mbo_subscriptions(self) -> None:
@@ -244,7 +244,7 @@ class DatabentoDataClient(LiveMarketDataClient):
 
             await asyncio.gather(*coros)
         except asyncio.CancelledError:
-            self._log.debug("Canceled `buffer_mbo_subscriptions` task")
+            self._log.debug("Canceled task 'buffer_mbo_subscriptions'")
 
     def _get_live_client(self, dataset: Dataset) -> nautilus_pyo3.DatabentoLiveClient:
         # Retrieve or initialize the 'general' live client for the specified dataset
@@ -254,7 +254,7 @@ class DatabentoDataClient(LiveMarketDataClient):
             live_client = nautilus_pyo3.DatabentoLiveClient(
                 key=self._live_api_key,
                 dataset=dataset,
-                publishers_path=str(PUBLISHERS_PATH),
+                publishers_filepath=str(PUBLISHERS_FILEPATH),
             )
             self._live_clients[dataset] = live_client
 
@@ -268,7 +268,7 @@ class DatabentoDataClient(LiveMarketDataClient):
             live_client = nautilus_pyo3.DatabentoLiveClient(
                 key=self._live_api_key,
                 dataset=dataset,
-                publishers_path=str(PUBLISHERS_PATH),
+                publishers_filepath=str(PUBLISHERS_FILEPATH),
             )
             self._live_clients_mbo[dataset] = live_client
 
@@ -509,16 +509,6 @@ class DatabentoDataClient(LiveMarketDataClient):
                     "No subscriptions for order book deltas (`instrument_ids` was empty)",
                 )
                 return
-
-            for instrument_id in instrument_ids:
-                if not self._cache.instrument(instrument_id):
-                    self._log.error(
-                        f"Cannot subscribe to order book deltas for {instrument_id}, "
-                        "instrument must be pre-loaded via the `DatabentoDataClientConfig` "
-                        "or a specific subscription on start",
-                    )
-                    instrument_ids.remove(instrument_id)
-                    continue
 
             if not instrument_ids:
                 return  # No subscribing instrument IDs were loaded in the cache

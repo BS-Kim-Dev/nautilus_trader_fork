@@ -26,6 +26,7 @@ from libc.stdint cimport uint64_t
 from nautilus_trader.accounting.accounts.base cimport Account
 from nautilus_trader.accounting.factory cimport AccountFactory
 from nautilus_trader.cache.facade cimport CacheDatabaseFacade
+from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.common.actor cimport Actor
 from nautilus_trader.core.correctness cimport Condition
 from nautilus_trader.core.datetime cimport format_iso8601
@@ -132,7 +133,7 @@ cdef class CacheDatabaseAdapter(CacheDatabaseFacade):
         UUID4 instance_id not None,
         Serializer serializer not None,
         config: CacheConfig | None = None,
-    ):
+    ) -> None:
         if config is None:
             config = CacheConfig()
         Condition.type(config, CacheConfig, "config")
@@ -159,7 +160,7 @@ cdef class CacheDatabaseAdapter(CacheDatabaseFacade):
         self._backing = nautilus_pyo3.RedisCacheDatabase(
             trader_id=nautilus_pyo3.TraderId(trader_id.value),
             instance_id=nautilus_pyo3.UUID4(instance_id.value),
-            config_json=msgspec.json.encode(config),
+            config_json=msgspec.json.encode(config, enc_hook=msgspec_encoding_hook),
         )
 
 # -- COMMANDS -------------------------------------------------------------------------------------
@@ -521,7 +522,7 @@ cdef class CacheDatabaseAdapter(CacheDatabaseFacade):
 
         """
         Condition.not_none(instrument_id, "instrument_id")
-        Condition.true(instrument_id.is_synthetic(), "instrument_id was not for a synthetic instrument")
+        Condition.is_true(instrument_id.is_synthetic(), "instrument_id was not for a synthetic instrument")
 
         cdef str key = f"{_SYNTHETICS}:{instrument_id.to_str()}"
         cdef list result = self._backing.read(key)

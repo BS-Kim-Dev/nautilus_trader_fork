@@ -30,6 +30,7 @@ use crate::{
     types::{currency::Currency, money::Money, price::Price, quantity::Quantity},
 };
 
+/// Represents a generic currency pair instrument in a spot/cash market.
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(
@@ -62,6 +63,75 @@ pub struct CurrencyPair {
 }
 
 impl CurrencyPair {
+    /// Creates a new [`CurrencyPair`] instance with correctness checking.
+    ///
+    /// # Notes
+    ///
+    /// PyO3 requires a `Result` type for proper error handling and stacktrace printing in Python.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_checked(
+        id: InstrumentId,
+        raw_symbol: Symbol,
+        base_currency: Currency,
+        quote_currency: Currency,
+        price_precision: u8,
+        size_precision: u8,
+        price_increment: Price,
+        size_increment: Quantity,
+        taker_fee: Decimal,
+        maker_fee: Decimal,
+        margin_init: Decimal,
+        margin_maint: Decimal,
+        lot_size: Option<Quantity>,
+        max_quantity: Option<Quantity>,
+        min_quantity: Option<Quantity>,
+        max_notional: Option<Money>,
+        min_notional: Option<Money>,
+        max_price: Option<Price>,
+        min_price: Option<Price>,
+        ts_event: UnixNanos,
+        ts_init: UnixNanos,
+    ) -> anyhow::Result<Self> {
+        check_equal_u8(
+            price_precision,
+            price_increment.precision,
+            stringify!(price_precision),
+            stringify!(price_increment.precision),
+        )?;
+        check_equal_u8(
+            size_precision,
+            size_increment.precision,
+            stringify!(size_precision),
+            stringify!(size_increment.precision),
+        )?;
+        check_positive_i64(price_increment.raw, stringify!(price_increment.raw))?;
+        check_positive_u64(size_increment.raw, stringify!(size_increment.raw))?;
+
+        Ok(Self {
+            id,
+            raw_symbol,
+            base_currency,
+            quote_currency,
+            price_precision,
+            size_precision,
+            price_increment,
+            size_increment,
+            maker_fee,
+            taker_fee,
+            margin_init,
+            margin_maint,
+            lot_size,
+            max_quantity,
+            min_quantity,
+            max_notional,
+            min_notional,
+            max_price,
+            min_price,
+            ts_event,
+            ts_init,
+        })
+    }
+
     /// Creates a new [`CurrencyPair`] instance.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -87,24 +157,7 @@ impl CurrencyPair {
         ts_event: UnixNanos,
         ts_init: UnixNanos,
     ) -> Self {
-        check_equal_u8(
-            price_precision,
-            price_increment.precision,
-            stringify!(price_precision),
-            stringify!(price_increment.precision),
-        )
-        .expect(FAILED);
-        check_equal_u8(
-            size_precision,
-            size_increment.precision,
-            stringify!(size_precision),
-            stringify!(size_increment.precision),
-        )
-        .expect(FAILED);
-        check_positive_i64(price_increment.raw, stringify!(price_increment.raw)).expect(FAILED);
-        check_positive_u64(size_increment.raw, stringify!(size_increment.raw)).expect(FAILED);
-
-        Self {
+        Self::new_checked(
             id,
             raw_symbol,
             base_currency,
@@ -113,8 +166,8 @@ impl CurrencyPair {
             size_precision,
             price_increment,
             size_increment,
-            maker_fee,
             taker_fee,
+            maker_fee,
             margin_init,
             margin_maint,
             lot_size,
@@ -126,7 +179,8 @@ impl CurrencyPair {
             min_price,
             ts_event,
             ts_init,
-        }
+        )
+        .expect(FAILED)
     }
 }
 
@@ -204,8 +258,7 @@ impl Instrument for CurrencyPair {
     }
 
     fn multiplier(&self) -> Quantity {
-        // SAFETY: Unwrap safe as using known values
-        Quantity::new(1.0, 0)
+        Quantity::from(1)
     }
 
     fn lot_size(&self) -> Option<Quantity> {

@@ -18,11 +18,7 @@ use std::{
     env,
     fmt::Display,
     str::FromStr,
-    sync::{
-        atomic::Ordering,
-        mpsc::{channel, Receiver, SendError, Sender},
-    },
-    thread::JoinHandle,
+    sync::{atomic::Ordering, mpsc::SendError},
 };
 
 use indexmap::IndexMap;
@@ -46,6 +42,8 @@ use crate::{
     logging::writer::{FileWriter, FileWriterConfig, LogWriter, StderrWriter, StdoutWriter},
 };
 
+const LOGGING: &str = "logging";
+
 #[cfg_attr(
     feature = "python",
     pyo3::pyclass(module = "nautilus_trader.core.nautilus_pyo3.common")
@@ -54,9 +52,9 @@ use crate::{
 pub struct LoggerConfig {
     /// Maximum log level to write to stdout.
     pub stdout_level: LevelFilter,
-    /// Maximum log level to write to file.
+    /// Maximum log level to write to file (disabled is `Off`).
     pub fileout_level: LevelFilter,
-    /// Maximum log level to write for a given component.
+    /// Per-component log levels, allowing finer-grained control.
     component_level: HashMap<Ustr, LevelFilter>,
     /// If logger is using ANSI color codes.
     pub is_colored: bool,
@@ -143,22 +141,17 @@ impl LoggerConfig {
     }
 }
 
-/// Initialize tracing.
-///
-/// Tracing is meant to be used to trace/debug async Rust code. It can be
-/// configured to filter modules and write up to a specific level only using
-/// by passing a configuration using the `RUST_LOG` environment variable.
-
 /// A high-performance logger utilizing a MPSC channel under the hood.
 ///
-/// A separate thead is spawned at initialization which receives [`LogEvent`] structs over the
-/// channel.
+/// A logger is initialized with a [`LoggerConfig`] to set up different logging levels for
+/// stdout, file, and components. The logger spawns a thread that listens for [`LogEvent`]s
+/// sent via an MPSC channel.
 #[derive(Debug)]
 pub struct Logger {
-    /// Configure maximum levels for components and IO.
+    /// Configuration for logging levels and behavior.
     pub config: LoggerConfig,
-    /// Send log events to a different thread.
-    tx: Sender<LogEvent>,
+    /// Transmitter for sending log events to the 'logging' thread.
+    tx: std::sync::mpsc::Sender<LogEvent>,
 }
 
 /// Represents a type of log event.
@@ -188,11 +181,22 @@ impl Display for LogLine {
     }
 }
 
+/// A wrapper around a log line that provides formatted and cached representations.
+///
+/// This struct contains a log line and provides various formatted versions
+/// of it, such as plain string, colored string, and JSON. It also caches the
+/// results for repeated calls, optimizing performance when the same message
+/// needs to be logged multiple times in different formats.
 pub struct LogLineWrapper {
+    /// The underlying log line that contains the log data.
     line: LogLine,
+    /// Cached plain string representation of the log line.
     cache: Option<String>,
+    /// Cached colored string representation of the log line.
     colored: Option<String>,
+    /// The timestamp of when the log event occurred.
     timestamp: String,
+    /// The ID of the trader associated with this log event.
     trader_id: Ustr,
 }
 
@@ -209,6 +213,10 @@ impl LogLineWrapper {
         }
     }
 
+    /// Returns the plain log message string, caching the result.
+    ///
+    /// This method constructs the log line format and caches it for repeated calls. Useful when the
+    /// same log message needs to be printed multiple times.
     pub fn get_string(&mut self) -> &str {
         self.cache.get_or_insert_with(|| {
             format!(
@@ -222,6 +230,11 @@ impl LogLineWrapper {
         })
     }
 
+    /// Returns the colored log message string, caching the result.
+    ///
+    /// This method constructs the colored log line format and caches the result
+    /// for repeated calls, providing the message with ANSI color codes if the
+    /// logger is configured to use colors.
     pub fn get_colored(&mut self) -> &str {
         self.colored.get_or_insert_with(|| {
             format!(
@@ -236,6 +249,11 @@ impl LogLineWrapper {
         })
     }
 
+    /// Returns the log message as a JSON string.
+    ///
+    /// This method serializes the log line and its associated metadata
+    /// (timestamp, trader ID, etc.) into a JSON string format. This is useful
+    /// for structured logging or when logs need to be stored in a JSON format.
     #[must_use]
     pub fn get_json(&self) -> String {
         let json_string =
@@ -312,6 +330,15 @@ impl Logger {
         Self::init_with_config(trader_id, instance_id, config, file_config)
     }
 
+    /// Initializes the logger with the given configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let config = LoggerConfig::from_spec("stdout=Info;fileout=Debug;RiskEngine=Error");
+    /// let file_config = FileWriterConfig::default();
+    /// let log_guard = Logger::init_with_config(trader_id, instance_id, config, file_config);
+    /// ```
     #[must_use]
     pub fn init_with_config(
         trader_id: TraderId,
@@ -319,7 +346,7 @@ impl Logger {
         config: LoggerConfig,
         file_config: FileWriterConfig,
     ) -> LogGuard {
-        let (tx, rx) = channel::<LogEvent>();
+        let (tx, rx) = std::sync::mpsc::channel::<LogEvent>();
 
         let logger = Self {
             tx,
@@ -332,12 +359,12 @@ impl Logger {
             println!("Logger initialized with {config:?} {file_config:?}");
         }
 
-        let mut handle: Option<JoinHandle<()>> = None;
+        let mut handle: Option<std::thread::JoinHandle<()>> = None;
         match set_boxed_logger(Box::new(logger)) {
             Ok(()) => {
                 handle = Some(
                     std::thread::Builder::new()
-                        .name("logging".to_string())
+                        .name(LOGGING.to_string())
                         .spawn(move || {
                             Self::handle_messages(
                                 trader_id.to_string(),
@@ -347,7 +374,7 @@ impl Logger {
                                 rx,
                             );
                         })
-                        .expect("Error spawning `logging` thread"),
+                        .expect("Error spawning thread '{LOGGING}'"),
                 );
 
                 let max_level = log::LevelFilter::Trace;
@@ -369,12 +396,8 @@ impl Logger {
         instance_id: String,
         config: LoggerConfig,
         file_config: FileWriterConfig,
-        rx: Receiver<LogEvent>,
+        rx: std::sync::mpsc::Receiver<LogEvent>,
     ) {
-        if config.print_config {
-            println!("Logger thread `handle_messages` initialized");
-        }
-
         let LoggerConfig {
             stdout_level,
             fileout_level,
@@ -385,7 +408,7 @@ impl Logger {
 
         let trader_id_cache = Ustr::from(&trader_id);
 
-        // Setup std I/O buffers
+        // Set up std I/O buffers
         let mut stdout_writer = StdoutWriter::new(stdout_level, is_colored);
         let mut stderr_writer = StderrWriter::new(is_colored);
 
@@ -426,8 +449,6 @@ impl Logger {
                         } else {
                             stderr_writer.write(wrapper.get_string());
                         }
-                        // TODO: remove flushes once log guard is implemented
-                        stderr_writer.flush();
                     }
 
                     if stdout_writer.enabled(&wrapper.line) {
@@ -436,7 +457,6 @@ impl Logger {
                         } else {
                             stdout_writer.write(wrapper.get_string());
                         }
-                        stdout_writer.flush();
                     }
 
                     if let Some(ref mut writer) = file_writer_opt {
@@ -446,7 +466,6 @@ impl Logger {
                             } else {
                                 writer.write(wrapper.get_string());
                             }
-                            writer.flush();
                         }
                     }
                 }
@@ -484,13 +503,13 @@ pub fn log(level: LogLevel, color: LogColor, component: Ustr, message: &str) {
 )]
 #[derive(Debug)]
 pub struct LogGuard {
-    handle: Option<JoinHandle<()>>,
+    handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl LogGuard {
     /// Creates a new [`LogGuard`] instance.
     #[must_use]
-    pub const fn new(handle: Option<JoinHandle<()>>) -> Self {
+    pub const fn new(handle: Option<std::thread::JoinHandle<()>>) -> Self {
         Self { handle }
     }
 }
@@ -624,6 +643,8 @@ mod tests {
             Duration::from_secs(2),
         );
 
+        drop(log_guard); // Ensure log buffers are flushed
+
         wait_until(
             || {
                 let log_file_path = std::fs::read_dir(&temp_dir)
@@ -639,8 +660,6 @@ mod tests {
             },
             Duration::from_secs(2),
         );
-
-        drop(log_guard); // Ensure log buffers are flushed
 
         assert_eq!(
             log_contents,
@@ -673,6 +692,8 @@ mod tests {
             "This is a test."
         );
 
+        drop(log_guard); // Ensure log buffers are flushed
+
         wait_until(
             || {
                 if let Some(log_file) = std::fs::read_dir(&temp_dir)
@@ -690,8 +711,6 @@ mod tests {
             },
             Duration::from_secs(3),
         );
-
-        drop(log_guard); // Ensure log buffers are flushed
 
         assert!(
             std::fs::read_dir(&temp_dir)
@@ -731,6 +750,8 @@ mod tests {
 
         let mut log_contents = String::new();
 
+        drop(log_guard); // Ensure log buffers are flushed
+
         wait_until(
             || {
                 if let Some(log_file) = std::fs::read_dir(&temp_dir)
@@ -748,8 +769,6 @@ mod tests {
             },
             Duration::from_secs(2),
         );
-
-        drop(log_guard); // Ensure log buffers are flushed
 
         assert_eq!(
         log_contents,

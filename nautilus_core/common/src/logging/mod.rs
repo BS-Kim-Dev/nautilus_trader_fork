@@ -88,13 +88,18 @@ pub extern "C" fn logging_clock_set_static_mode() {
     LOGGING_REALTIME.store(false, Ordering::Relaxed);
 }
 
-/// Sets the global logging clock static time with the given UNIX time (nanoseconds).
+/// Sets the global logging clock static time with the given UNIX timestamp (nanoseconds).
 #[no_mangle]
 pub extern "C" fn logging_clock_set_static_time(time_ns: u64) {
     let clock = get_atomic_clock_static();
     clock.set_time(time_ns.into());
 }
 
+/// Initialize tracing.
+///
+/// Tracing is meant to be used to trace/debug async Rust code. It can be
+/// configured to filter modules and write up to a specific level by passing
+/// a configuration using the `RUST_LOG` environment variable.
 ///
 /// # Safety
 ///

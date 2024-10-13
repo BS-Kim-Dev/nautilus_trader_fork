@@ -9,10 +9,10 @@ into a unified interface.
 ## Structure of an adapter
 
 An adapter typically consists of several components:
-1. **Instrument Provider:** Supplies instrument definitions
-2. **Data Client:** Handles live market data feeds and historical data requests
-3. **Execution Client:** Handles order execution and management
-5. **Configuration:** Configures the client settings
+1. **Instrument Provider**: Supplies instrument definitions
+2. **Data Client**: Handles live market data feeds and historical data requests
+3. **Execution Client**: Handles order execution and management
+5. **Configuration**: Configures the client settings
 
 ## Adapter implementation steps
 
@@ -52,7 +52,7 @@ class TemplateInstrumentProvider(InstrumentProvider):
         raise NotImplementedError("method `load_async` must be implemented in the subclass")
 ```
 
-**Key Methods:**
+**Key Methods**:
 - `load_all_async`: Loads all instruments asynchronously, optionally applying filters
 - `load_ids_async`: Loads specific instruments by their IDs
 - `load_async`: Loads a single instrument by its ID
@@ -95,7 +95,7 @@ class TemplateLiveDataClient(LiveDataClient):
         raise NotImplementedError("method `_request` must be implemented in the subclass")
 ```
 
-**Key Methods:**
+**Key Methods**:
 - `_connect`: Establishes a connection to the data provider
 - `_disconnect`: Closes the connection to the data provider
 - `reset`: Resets the state of the client
@@ -146,7 +146,7 @@ class TemplateLiveMarketDataClient(LiveMarketDataClient):
         raise NotImplementedError("method `_unsubscribe_order_book_deltas` must be implemented in the subclass")
 ```
 
-**Key Methods:**
+**Key Methods**:
 - `_connect`: Establishes a connection to the venues APIs
 - `_disconnect`: Closes the connection to the venues APIs
 - `reset`: Resets the state of the client
@@ -163,7 +163,7 @@ cancellation of orders. It is a crucial component of the adapter that interacts 
 trading system to manage and execute trades.
 
 ```python
-from nautilus_trader.execution.messages import CancelAllOrders, CancelOrder, ModifyOrder, SubmitOrder
+from nautilus_trader.execution.messages import BatchCancelOrders, CancelAllOrders, CancelOrder, ModifyOrder, SubmitOrder
 from nautilus_trader.execution.reports import FillReport, OrderStatusReport, PositionStatusReport
 from nautilus_trader.live.execution_client import LiveExecutionClient
 from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId, VenueOrderId
@@ -191,6 +191,9 @@ class TemplateLiveExecutionClient(LiveExecutionClient):
     async def _cancel_all_orders(self, command: CancelAllOrders) -> None:
         raise NotImplementedError("method `_cancel_all_orders` must be implemented in the subclass")
 
+    async def _batch_cancel_orders(self, command: BatchCancelOrders) -> None:
+        raise NotImplementedError("method `_batch_cancel_orders` must be implemented in the subclass")  
+
     async def generate_order_status_report(
         self, instrument_id: InstrumentId, client_order_id: ClientOrderId | None = None, venue_order_id: VenueOrderId | None = None
     ) -> OrderStatusReport | None:
@@ -212,13 +215,14 @@ class TemplateLiveExecutionClient(LiveExecutionClient):
         raise NotImplementedError("method `generate_position_status_reports` must be implemented in the subclass")
 ```
 
-**Key Methods:**
+**Key Methods**:
 - `_connect`: Establishes a connection to the venues APIs
 - `_disconnect`: Closes the connection to the venues APIs
 - `_submit_order`: Submits a new order to the venue
 - `_modify_order`: Modifies an existing order on the venue
 - `_cancel_order`: Cancels a specific order on the venue
-- `_cancel_all_orders`: Cancels all orders on the venue
+- `_cancel_all_orders`: Cancels all orders for an instrument on the venue
+- `_batch_cancel_orders`: Cancels a batch of orders for an instrument on the venue
 - `generate_order_status_report`: Generates a report for a specific order on the venue
 - `generate_order_status_reports`: Generates reports for all orders on the venue
 - `generate_fill_reports`: Generates reports for filled orders on the venue
@@ -252,7 +256,7 @@ class TemplateExecClientConfig(LiveExecClientConfig):
     base_url: str
 ```
 
-**Key Attributes:**
+**Key Attributes**:
 - `api_key`: The API key for authenticating with the data provider
 - `api_secret`: The API secret for authenticating with the data provider
 - `base_url`: The base URL for connecting to the data provider’s API

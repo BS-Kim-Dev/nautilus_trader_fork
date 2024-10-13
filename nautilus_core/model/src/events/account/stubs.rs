@@ -24,7 +24,7 @@ use crate::{
         balance::AccountBalance,
         currency::Currency,
         money::Money,
-        stubs::{account_balance_test, margin_balance_test},
+        stubs::{stub_account_balance, stub_margin_balance},
     },
 };
 
@@ -33,7 +33,7 @@ pub fn cash_account_state() -> AccountState {
     AccountState::new(
         account_id(),
         AccountType::Cash,
-        vec![account_balance_test()],
+        vec![stub_account_balance()],
         vec![],
         true,
         uuid4(),
@@ -41,7 +41,6 @@ pub fn cash_account_state() -> AccountState {
         0.into(),
         Some(Currency::USD()),
     )
-    .unwrap()
 }
 
 #[fixture]
@@ -65,7 +64,6 @@ pub fn cash_account_state_million_usd(
         0.into(),
         Some(Currency::USD()),
     )
-    .unwrap()
 }
 
 #[fixture]
@@ -85,7 +83,6 @@ pub fn cash_account_state_million_usdt() -> AccountState {
         0.into(),
         Some(Currency::USD()),
     )
-    .unwrap()
 }
 
 #[fixture]
@@ -111,7 +108,6 @@ pub fn cash_account_state_multi() -> AccountState {
         0.into(),
         None, // multi cash account
     )
-    .unwrap()
 }
 
 #[fixture]
@@ -137,7 +133,6 @@ pub fn cash_account_state_multi_changed_btc() -> AccountState {
         0.into(),
         None, // multi cash account
     )
-    .unwrap()
 }
 
 #[fixture]
@@ -145,13 +140,12 @@ pub fn margin_account_state() -> AccountState {
     AccountState::new(
         account_id(),
         AccountType::Margin,
-        vec![account_balance_test()],
-        vec![margin_balance_test()],
+        vec![stub_account_balance()],
+        vec![stub_margin_balance()],
         true,
         uuid4(),
         0.into(),
         0.into(),
         Some(Currency::USD()),
     )
-    .unwrap()
 }

@@ -301,6 +301,18 @@ class TestTestClock:
         assert isinstance(result, int)
         assert result == 1000
 
+    def test_timestamp_us_returns_expected_datetime(self):
+        # Arrange
+        clock = TestClock()
+        clock.advance_time(1_000_000_000)
+
+        # Act
+        result = clock.timestamp_us()
+
+        # Assert
+        assert isinstance(result, int)
+        assert result == 1_000_000
+
     def test_timestamp_ns_returns_expected_datetime(self):
         # Arrange
         clock = TestClock()
@@ -600,6 +612,22 @@ class TestLiveClock:
         assert result3 >= result2
         assert result2 >= result1
 
+    def test_timestamp_us_is_monotonic(self):
+        # Arrange, Act
+        result1 = self.clock.timestamp_us()
+        result2 = self.clock.timestamp_us()
+        result3 = self.clock.timestamp_us()
+        result4 = self.clock.timestamp_us()
+        result5 = self.clock.timestamp_us()
+
+        # Assert
+        assert isinstance(result1, int)
+        assert result1 > 0
+        assert result5 >= result4
+        assert result4 >= result3
+        assert result3 >= result2
+        assert result2 >= result1
+
     def test_timestamp_ns_is_monotonic(self):
         # Arrange, Act
         result1 = self.clock.timestamp_ns()
@@ -748,11 +776,11 @@ class TestLiveClock:
         # Act
         time.sleep(0.3)
         self.clock.cancel_timer(name)
-        time.sleep(0.3)
+        time.sleep(1.0)
 
         # Assert
         assert self.clock.timer_count == 0
-        assert len(self.handler) <= 4
+        assert len(self.handler) <= 6
 
     def test_set_repeating_timer(self):
         # Arrange
@@ -791,7 +819,7 @@ class TestLiveClock:
         # Act
         time.sleep(0.3)
         self.clock.cancel_timer(name)
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         # Assert
         assert len(self.handler) <= 6

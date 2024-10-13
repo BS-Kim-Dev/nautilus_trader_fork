@@ -15,16 +15,22 @@
 
 use std::str::FromStr;
 
-use nautilus_core::python::to_pyvalue_err;
+use nautilus_core::{
+    correctness::check_valid_string,
+    python::{to_pyruntime_err, to_pyvalue_err},
+};
 use pyo3::{
-    exceptions::PyRuntimeError,
+    exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
     pyclass::CompareOp,
     types::{PyLong, PyString, PyTuple},
 };
 use ustr::Ustr;
 
-use crate::{enums::CurrencyType, types::currency::Currency};
+use crate::{
+    enums::CurrencyType,
+    types::{currency::Currency, fixed::check_fixed_precision},
+};
 
 #[pymethods]
 impl Currency {
@@ -35,8 +41,8 @@ impl Currency {
         iso4217: u16,
         name: &str,
         currency_type: CurrencyType,
-    ) -> Self {
-        Self::new(code, precision, iso4217, name, currency_type)
+    ) -> PyResult<Self> {
+        Self::new_checked(code, precision, iso4217, name, currency_type).map_err(to_pyvalue_err)
     }
 
     fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
@@ -149,7 +155,8 @@ impl Currency {
                 if strict {
                     Err(to_pyvalue_err(e))
                 } else {
-                    Ok(Self::new(value, 8, 0, value, CurrencyType::Crypto))
+                    Self::new_checked(value, 8, 0, value, CurrencyType::Crypto)
+                        .map_err(to_pyvalue_err)
                 }
             }
         }
@@ -159,6 +166,6 @@ impl Currency {
     #[pyo3(name = "register")]
     #[pyo3(signature = (currency, overwrite = false))]
     fn py_register(currency: Self, overwrite: bool) -> PyResult<()> {
-        Self::register(currency, overwrite).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        Self::register(currency, overwrite).map_err(to_pyruntime_err)
     }
 }

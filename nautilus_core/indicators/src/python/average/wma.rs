@@ -13,7 +13,7 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-use nautilus_core::python::to_pyvalue_err;
+use nautilus_core::{correctness::check_predicate_true, python::to_pyvalue_err};
 use nautilus_model::{
     data::{bar::Bar, quote::QuoteTick, trade::TradeTick},
     enums::PriceType,
@@ -33,7 +33,7 @@ impl WeightedMovingAverage {
         weights: Vec<f64>,
         price_type: Option<PriceType>,
     ) -> PyResult<Self> {
-        Self::new(period, weights, price_type).map_err(to_pyvalue_err)
+        Self::new_checked(period, weights, price_type).map_err(to_pyvalue_err)
     }
 
     fn __repr__(&self) -> String {
@@ -71,13 +71,13 @@ impl WeightedMovingAverage {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, tick: &QuoteTick) {
-        self.py_update_raw(tick.extract_price(self.price_type).into());
+    fn py_handle_quote_tick(&mut self, quote: &QuoteTick) {
+        self.py_update_raw(quote.extract_price(self.price_type).into());
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, tick: &TradeTick) {
-        self.update_raw((&tick.price).into());
+    fn py_handle_trade_tick(&mut self, trade: &TradeTick) {
+        self.update_raw((&trade.price).into());
     }
 
     #[pyo3(name = "handle_bar")]

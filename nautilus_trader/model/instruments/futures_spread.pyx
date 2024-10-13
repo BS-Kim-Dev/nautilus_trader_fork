@@ -78,8 +78,6 @@ cdef class FuturesSpread(Instrument):
     Raises
     ------
     ValueError
-        If `underlying` is not a valid string.
-    ValueError
         If `strategy_type` is not a valid string.
     ValueError
         If `multiplier` is not positive (> 0).
@@ -99,7 +97,7 @@ cdef class FuturesSpread(Instrument):
         Currency currency not None,
         int price_precision,
         Price price_increment not None,
-        Quantity multiplier,
+        Quantity multiplier not None,
         Quantity lot_size not None,
         str underlying,
         str strategy_type,
@@ -110,9 +108,7 @@ cdef class FuturesSpread(Instrument):
         str exchange = None,
         dict info = None,
     ):
-        Condition.valid_string(underlying, "underlying")
         Condition.valid_string(strategy_type, "strategy_type")
-        Condition.positive_int(multiplier, "multiplier")
         if exchange is not None:
             Condition.valid_string(exchange, "exchange")
         super().__init__(

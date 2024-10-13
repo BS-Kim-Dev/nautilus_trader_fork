@@ -9,6 +9,8 @@ from enum import Enum
 from os import PathLike
 from typing import Any, TypeAlias, Union
 
+import numpy as np
+
 from nautilus_trader.core.data import Data
 
 # Python Interface typing:
@@ -247,6 +249,16 @@ class MessageBus:
     def unsubscribe(self, topic: str, handler: PythonMessageHandler) -> None: ...
     def is_registered(self, endpoint: str) -> bool: ...
     def deregister(self, endpoint: str) -> None: ...
+
+class Signal:
+    def __init__(
+        self,
+        data_type: str,
+        metadata: str,
+        value: str,
+        ts_event: int,
+        ts_init: int,
+    ) -> None: ...
 
 ###################################################################################################
 # Model
@@ -818,6 +830,7 @@ class InstrumentClass(Enum):
     OPTION_SPREAD = "OPTION_SPEAD"
     WARRANT = "WARRANT"
     SPORTS_BETTING = "SPORTS_BETTING"
+    BINARY_OPTION = "BINARY_OPTION"
 
 class BarAggregation(Enum):
     TICK = "TICK"
@@ -1074,6 +1087,12 @@ class Symbol:
     def from_str(cls, value: str) -> Symbol: ...
     @property
     def value(self) -> str: ...
+    @property
+    def is_composite(self) -> bool: ...
+    @property
+    def root(self) -> str: ...
+    @property
+    def topic(self) -> str: ...
 
 class TradeId:
     def __init__(self, value: str) -> None: ...
@@ -1675,6 +1694,58 @@ class AccountState:
 
 # Instruments
 
+class BinaryOption:
+    def __init__(
+        self,
+        id: InstrumentId,
+        raw_symbol: Symbol,
+        asset_class: AssetClass,
+        currency: Currency,
+        activation_ns: int,
+        expiration_ns: int,
+        price_precision: int,
+        size_precision: int,
+        price_increment: Price,
+        size_increment: Quantity,
+        maker_fee: Decimal,
+        taker_fee: Decimal,
+        margin_init: Decimal,
+        margin_maint: Decimal,
+        ts_event: int,
+        ts_init: int,
+        outcome: str | None = None,
+        description: str | None = None,
+        max_quantity: Quantity | None = None,
+        min_quantity: Quantity | None = None,
+        max_notional: Money | None = None,
+        min_notional: Money | None = None,
+        max_price: Price | None = None,
+        min_price: Price | None = None,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, values: dict[str, str]) -> BinaryOption: ...
+    @property
+    def id(self) -> InstrumentId: ...
+    @property
+    def raw_symbol(self) -> Symbol: ...
+    @property
+    def asset_class(self) -> AssetClass: ...
+    @property
+    def currency(self) -> Currency: ...
+    @property
+    def price_precision(self) -> int: ...
+    @property
+    def size_precision(self) -> int: ...
+    @property
+    def price_increment(self) -> Price: ...
+    @property
+    def size_increment(self) -> Quantity: ...
+    @property
+    def outcome(self) -> str | None: ...
+    @property
+    def description(self) -> str | None: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
 class CryptoFuture:
     def __init__(
         self,
@@ -1950,10 +2021,10 @@ class OptionsContract:
         asset_class: AssetClass,
         underlying: str,
         option_kind: OptionKind,
-        activation_ns: int,
-        expiration_ns: int,
         strike_price: Price,
         currency: Currency,
+        activation_ns: int,
+        expiration_ns: int,
         price_precision: int,
         price_increment: Price,
         multiplier: Quantity,
@@ -2410,8 +2481,8 @@ class Level:
 class OrderBook:
     def __init__(
         self,
-        book_type: BookType,
         instrument_id: InstrumentId,
+        book_type: BookType,
     ) -> None: ...
     @property
     def instrument_id(self) -> InstrumentId: ...
@@ -2486,37 +2557,44 @@ class PostgresCacheDatabase:
     def connect(
         cls,
         host: str | None = None,
-        port: str | None = None,
+        port: int | None = None,
         username: str | None = None,
         password: str | None = None,
         database: str | None = None,
     ) -> PostgresCacheDatabase: ...
+    def flush_db(self) -> None: ...
     def load(self) -> dict[str, str]: ...
-    def add(self, key: str, value: bytes) -> None: ...
-    def add_currency(self, currency: Currency) -> None: ...
-    def add_instrument(self, instrument: object) -> None: ...
-    def add_order(self, instrument: object) -> None: ...
-    def add_account(self, account: object) -> None: ...
-    def update_order(self, order: object) -> None: ...
     def load_currency(self, code: str) -> Currency | None: ...
     def load_currencies(self) -> list[Currency]: ...
     def load_instrument(self, instrument_id: InstrumentId) -> Instrument | None: ...
     def load_instruments(self) -> list[Instrument]: ...
-    def load_order(self, order_id: ClientOrderId) -> Order | None: ...
+    def load_order(self, client_order_id: ClientOrderId) -> Order | None: ...
     def load_account(self, account_id: AccountId) -> Account | None: ...
-    def update_account(self, account: Account) -> None: ...
-    def add_trade(self, trade: TradeTick) -> None: ...
     def load_trades(self, instrument_id: InstrumentId) -> list[TradeTick]: ...
-    def add_quote(self, quote: QuoteTick) -> None: ...
     def load_quotes(self, instrument_id: InstrumentId) -> list[QuoteTick]: ...
-    def add_bar(self, bar: Bar) -> None: ...
     def load_bars(self, instrument_id: InstrumentId) -> list[Bar]: ...
-    def flush_db(self) -> None: ...
-    def truncate(self, table: str) -> None: ...
+    def load_signals(self, data_type: str, metadata: str) -> list[Signal]: ...
+    def add(self, key: str, value: bytes) -> None: ...
+    def add_currency(self, currency: Currency) -> None: ...
+    def add_instrument(self, instrument: object) -> None: ...
+    def add_order(self, order: object) -> None: ...
+    def add_account(self, account: object) -> None: ...
+    def add_trade(self, trade: TradeTick) -> None: ...
+    def add_quote(self, quote: QuoteTick) -> None: ...
+    def add_bar(self, bar: Bar) -> None: ...
+    def add_signal(self, signal: Signal) -> None: ...
+    def update_order(self, order: object) -> None: ...
+    def update_account(self, account: Account) -> None: ...
 
 ###################################################################################################
 # Network
 ###################################################################################################
+
+class HttpError(Exception):
+    ...
+
+class HttpTimeoutError(Exception):
+    ...
 
 class HttpClient:
     def __init__(
@@ -2558,6 +2636,9 @@ class Quota:
     @classmethod
     def rate_per_hour(cls, max_burst: int) -> Quota: ...
 
+class WebSocketClientError(Exception):
+    ...
+
 class WebSocketConfig:
     def __init__(
         self,
@@ -2577,12 +2658,13 @@ class WebSocketClient:
         post_connection: Callable[..., None] | None = None,
         post_reconnection: Callable[..., None] | None = None,
         post_disconnection: Callable[..., None] | None = None,
+        keyed_quotas: list[tuple[str, Quota]] = [],
+        default_quota: Quota | None = None,
     ) -> Awaitable[WebSocketClient]: ...
     def disconnect(self) -> Awaitable[None]: ...
-    @property
     def is_alive(self) -> bool: ...
-    def send(self, data: bytes) -> Awaitable[None]: ...
-    def send_text(self, data: str) -> Awaitable[None]: ...
+    def send(self, data: bytes, keys: list[str] | None = None) -> Awaitable[None]: ...
+    def send_text(self, data: bytes, keys: list[str] | None = None) -> Awaitable[None]: ...
     def send_pong(self, data: bytes) -> Awaitable[None]: ...
 
 class SocketClient:
@@ -2595,7 +2677,6 @@ class SocketClient:
         post_disconnection: Callable[..., None] | None = None,
     ) -> Awaitable[SocketClient]: ...
     def disconnect(self) -> Awaitable[None]: ...
-    @property
     def is_alive(self) -> bool: ...
     def send(self, data: bytes) -> Awaitable[None]: ...
 
@@ -2621,7 +2702,7 @@ class NautilusDataType(Enum):
     Bar = 5
 
 class DataBackendSession:
-    def __init__(self, chunk_size: int = 5000) -> None: ...
+    def __init__(self, chunk_size: int = 10_000) -> None: ...
     def add_file(
         self,
         data_type: NautilusDataType,
@@ -3772,32 +3853,34 @@ class DatabentoStatistics:
 class DatabentoDataLoader:
     def __init__(
         self,
-        path: PathLike[str] | str,
+        publishers_filepath: PathLike[str] | str,
     ) -> None: ...
-    def load_publishers(self, path: PathLike[str] | str) -> None: ...
+    def load_publishers(self, filepath: PathLike[str] | str) -> None: ...
     def get_publishers(self) -> dict[int, DatabentoPublisher]: ...
     def get_dataset_for_venue(self, venue: Venue) -> str: ...
-    def schema_for_file(self, path: str) -> str: ...
-    def load_instruments(self, path: str) -> list[Instrument]: ...
-    def load_order_book_deltas(self, path: str, instrument_id: InstrumentId | None) -> list[OrderBookDelta]: ...
-    def load_order_book_deltas_as_pycapsule(self, path: str, instrument_id: InstrumentId | None, include_trades: bool | None) -> object: ...
-    def load_order_book_depth10(self, path: str, instrument_id: InstrumentId | None) -> list[OrderBookDepth10]: ...
-    def load_order_book_depth10_as_pycapsule(self, path: str, instrument_id: InstrumentId | None) -> object: ...
-    def load_quotes(self, path: str, instrument_id: InstrumentId | None) -> list[QuoteTick]: ...
-    def load_quotes_as_pycapsule(self, path: str, instrument_id: InstrumentId | None, include_trades: bool | None) -> object: ...
-    def load_trades(self, path: str, instrument_id: InstrumentId | None) -> list[TradeTick]: ...
-    def load_trades_as_pycapsule(self, path: str, instrument_id: InstrumentId | None) -> object: ...
-    def load_bars(self, path: str, instrument_id: InstrumentId | None) -> list[Bar]: ...
-    def load_bars_as_pycapsule(self, path: str, instrument_id: InstrumentId | None) -> object: ...
-    def load_status(self, path: str, instrument_id: InstrumentId | None) -> list[InstrumentStatus]: ...
-    def load_imbalance(self, path: str, instrument_id: InstrumentId | None) -> list[DatabentoImbalance]: ...
-    def load_statistics(self, path: str, instrument_id: InstrumentId | None) -> list[DatabentoStatistics]: ...
+    def schema_for_file(self, filepath: str) -> str: ...
+    def load_instruments(self, filepath: str) -> list[Instrument]: ...
+    def load_order_book_deltas(self, filepath: str, instrument_id: InstrumentId | None) -> list[OrderBookDelta]: ...
+    def load_order_book_deltas_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None, include_trades: bool | None) -> object: ...
+    def load_order_book_depth10(self, filepath: str, instrument_id: InstrumentId | None) -> list[OrderBookDepth10]: ...
+    def load_order_book_depth10_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None) -> object: ...
+    def load_quotes(self, filepath: str, instrument_id: InstrumentId | None) -> list[QuoteTick]: ...
+    def load_quotes_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None, include_trades: bool | None) -> object: ...
+    def load_bbo_quotes(self, filepath: str, instrument_id: InstrumentId | None) -> list[QuoteTick]: ...
+    def load_bbo_quotes_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None) -> object: ...
+    def load_trades(self, filepath: str, instrument_id: InstrumentId | None) -> list[TradeTick]: ...
+    def load_trades_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None) -> object: ...
+    def load_bars(self, filepath: str, instrument_id: InstrumentId | None) -> list[Bar]: ...
+    def load_bars_as_pycapsule(self, filepath: str, instrument_id: InstrumentId | None) -> object: ...
+    def load_status(self, filepath: str, instrument_id: InstrumentId | None) -> list[InstrumentStatus]: ...
+    def load_imbalance(self, filepath: str, instrument_id: InstrumentId | None) -> list[DatabentoImbalance]: ...
+    def load_statistics(self, filepath: str, instrument_id: InstrumentId | None) -> list[DatabentoStatistics]: ...
 
 class DatabentoHistoricalClient:
     def __init__(
         self,
         key: str,
-        publishers_path: str,
+        publishers_filepath: str,
     ) -> None: ...
     @property
     def key(self) -> str: ...
@@ -3865,15 +3948,13 @@ class DatabentoLiveClient:
         self,
         key: str,
         dataset: str,
-        publishers_path: str,
+        publishers_filepath: str,
     ) -> None: ...
     @property
     def key(self) -> str: ...
     @property
     def dataset(self) -> str: ...
-    @property
     def is_running(self) -> bool: ...
-    @property
     def is_closed(self) -> bool: ...
     def subscribe(
         self,
@@ -3889,3 +3970,248 @@ class DatabentoLiveClient:
         callback_pyo3: Callable,
     ) -> Awaitable[None]: ...
     def close(self) -> None: ...
+
+# Crypto
+
+def hmac_sign(secret: str, data: str) -> str: ...
+def rsa_signature(private_key_pem: str, data: str) -> str: ...
+def ed25519_signature(private_key: bytes, data: str) -> str: ...
+
+# Tardis
+
+def load_tardis_deltas(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> list[OrderBookDelta]: ...  # noqa
+def load_tardis_depth10_from_snapshot5(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> list[OrderBookDepth10]: ...  # noqa
+def load_tardis_depth10_from_snapshot25(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> list[OrderBookDepth10]: ...  # noqa
+def load_tardis_quotes(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> list[QuoteTick]: ...  # noqa
+def load_tardis_trades(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> list[TradeTick]: ...  # noqa
+def load_tardis_deltas_as_pycapsule(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> object: ...  # noqa
+def load_tardis_depth10_from_snapshot5_as_pycapsule(filepath: str, price_precision: int, size_precision: int,  instrument_id: InstrumentId | None, limit: int | None = None) -> object: ...  # noqa
+def load_tardis_depth10_from_snapshot25_as_pycapsule(filepath: str, price_precision: int, size_precision: int,  instrument_id: InstrumentId | None, limit: int | None = None) -> object: ...  # noqa
+def load_tardis_quotes_as_pycapsule(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> object: ...  # noqa
+def load_tardis_trades_as_pycapsule(filepath: str, price_precision: int, size_precision: int, instrument_id: InstrumentId | None, limit: int | None = None) -> object: ...  # noqa
+
+# Greeks
+
+class BlackScholesGreeksResult:
+    price: float
+    delta: float
+    gamma: float
+    vega: float
+    theta: float
+
+class ImplyVolAndGreeksResult:
+    vol: float
+    price: float
+    delta: float
+    gamma: float
+    vega: float
+    theta: float
+
+
+def black_scholes_greeks(
+    s: float,
+    r: float,
+    b: float,
+    sigma: float,
+    is_call: bool,
+    k: float,
+    t: float,
+    multiplier: float,
+) -> BlackScholesGreeksResult:
+    """
+    Calculate the Black-Scholes Greeks for a given option contract.
+
+    Parameters
+    ----------
+    s : float
+        The current price of the underlying asset.
+    r : float
+        The risk-free interest rate.
+    b : float
+        The cost of carry of the underlying asset.
+    sigma : float
+        The volatility of the underlying asset.
+    is_call : bool
+        Whether the option is a call (True) or a put (False).
+    k : float
+        The strike price of the option.
+    t : float
+        The time to expiration of the option in years.
+    multiplier : float
+        The multiplier for the option contract.
+
+    Returns
+    -------
+    BlackScholesGreeksResult
+        A named tuple containing the calculated option price, delta, gamma, vega, and theta.
+    """
+
+
+def imply_vol(
+    s: float,
+    r: float,
+    b: float,
+    is_call: bool,
+    k: float,
+    t: float,
+    price: float,
+) -> float:
+    """
+    Calculate the implied volatility and Greeks for an option contract.
+
+    Parameters
+    ----------
+    s : float
+        The current price of the underlying asset.
+    r : float
+        The risk-free interest rate.
+    b : float
+        The cost of carry of the underlying asset.
+    is_call : bool
+        Whether the option is a call (True) or a put (False).
+    k : float
+        The strike price of the option.
+    t : float
+        The time to expiration of the option in years.
+    price : float
+        The current market price of the option.
+    multiplier : float
+        The multiplier for the option contract.
+
+    Returns
+    -------
+    float
+        An implied volatility value.
+    """
+
+
+def imply_vol_and_greeks(
+    s: float,
+    r: float,
+    b: float,
+    is_call: bool,
+    k: float,
+    t: float,
+    price: float,
+    multiplier: float,
+) -> ImplyVolAndGreeksResult :
+    """
+    Calculate the implied volatility and Greeks for an option contract.
+
+    Parameters
+    ----------
+    s : float
+        The current price of the underlying asset.
+    r : float
+        The risk-free interest rate.
+    b : float
+        The cost of carry of the underlying asset.
+    is_call : bool
+        Whether the option is a call (True) or a put (False).
+    k : float
+        The strike price of the option.
+    t : float
+        The time to expiration of the option in years.
+    price : float
+        The current market price of the option.
+    multiplier : float
+        The multiplier for the option contract.
+
+    Returns
+    -------
+    ImplyVolAndGreeksResult
+        A named tuple containing the calculated implied volatility, option price, delta, gamma, vega, and theta
+    """
+
+
+class GreeksData(Data):
+    instrument_id: InstrumentId
+    is_call: bool
+    strike: float
+    expiry: int
+    forward: float
+    expiry_in_years: float
+    interest_rate: float
+    vol: float
+    price: float
+    delta: float
+    gamma: float
+    vega: float
+    theta: float
+    quantity: float
+    itm_prob: float
+
+    def __init__(
+        self,
+        ts_event: int = 0,
+        ts_init: int = 0,
+        instrument_id: InstrumentId = ...,
+        is_call: bool = True,
+        strike: float = 0.0,
+        expiry: int = 0,
+        forward: float = 0.0,
+        expiry_in_years: float = 0.0,
+        interest_rate: float = 0.0,
+        vol: float = 0.0,
+        price: float = 0.0,
+        delta: float = 0.0,
+        gamma: float = 0.0,
+        vega: float = 0.0,
+        theta: float = 0.0,
+        quantity: float = 0.0,
+        itm_prob: float = 0.0,
+    ): ...
+
+    @classmethod
+    def from_delta(cls, instrument_id: InstrumentId, delta: float) -> GreeksData: ...
+
+
+class PortfolioGreeks(Data):
+    delta: float
+    gamma: float
+    vega: float
+    theta: float
+
+    def __init__(
+        self,
+        ts_event: int = 0,
+        ts_init: int = 0,
+        delta: float = 0.0,
+        gamma: float = 0.0,
+        vega: float = 0.0,
+        theta: float = 0.0,
+    ): ...
+
+
+class InterestRateData(Data):
+    curve_name: str
+    interest_rate: float
+
+    def __init__(
+        self,
+        ts_event: int = 0,
+        ts_init: int = 0,
+        curve_name: str = "USD",
+        interest_rate: float = 0.05,
+    ): ...
+
+
+class InterestRateCurveData(Data):
+    curve_name: str
+    tenors: np.ndarray
+    interest_rates: np.ndarray
+
+    def __init__(
+        self,
+        ts_event: int,
+        ts_init: int,
+        curve_name: str,
+        tenors: np.ndarray,
+        interest_rates: np.ndarray,
+    ): ...
+
+###################################################################################################
+# Test Kit
+###################################################################################################
+
+def ensure_file_exists_or_download_http(filepath: str, url: str, checksums: str | None = None): ...

@@ -9,11 +9,25 @@ of daily trading volume, and open interest of crypto assets and crypto
 derivative products. This integration supports live market data ingest and order
 execution with Bybit.
 
+## Installation
+
+To install the latest `nautilus_trader` package along with the `bybit` dependencies using pip:
+
+```
+pip install -U "nautilus_trader[bybit]"
+```
+
+To install from source using poetry:
+
+```
+poetry install --extras bybit
+```
+
 ## Overview
 
 The following documentation assumes a trader is setting up for both live market
 data feeds, and trade execution. The full Bybit integration consists of an assortment of components,
-which can be used together or separately depending on the users needs.
+which can be used together or separately depending on the user's needs.
 
 - `BybitHttpClient`: Low-level HTTP API connectivity
 - `BybitWebSocketClient`: Low-level WebSocket API connectivity
@@ -35,7 +49,7 @@ It’s recommended you also refer to the Bybit documentation in conjunction with
 
 ## Products
 
-A product is an umberalla term for a group of related instrument types.
+A product is an umbrella term for a group of related instrument types.
 
 :::note
 Product is also referred to as `category` in the Bybit v5 API.
@@ -53,10 +67,10 @@ Options contracts are not currently supported (will be implemented in a future v
 
 ## Symbology
 
-To distinguish between different product types on Bybit, the following instrument ID suffix’s are used:
+To distinguish between different product types on Bybit, the following instrument ID suffixes are used:
 
 - `-SPOT`: Spot cryptocurrencies
-- `-LINEAR`: Perpeutal and futures contracts
+- `-LINEAR`: Perpetual and futures contracts
 - `-INVERSE`: Inverse perpetual and inverse futures contracts
 - `-OPTION`: Options contracts (not currently supported)
 

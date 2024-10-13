@@ -27,8 +27,8 @@ use crate::{
 #[pymethods]
 impl RelativeStrengthIndex {
     #[new]
-    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> PyResult<Self> {
-        Self::new(period, ma_type).map_err(to_pyvalue_err)
+    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> Self {
+        Self::new(period, ma_type)
     }
 
     fn __repr__(&self) -> String {
@@ -71,8 +71,8 @@ impl RelativeStrengthIndex {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, tick: &QuoteTick) {
-        self.py_update_raw(tick.extract_price(PriceType::Mid).into());
+    fn py_handle_quote_tick(&mut self, quote: &QuoteTick) {
+        self.py_update_raw(quote.extract_price(PriceType::Mid).into());
     }
 
     #[pyo3(name = "handle_bar")]
@@ -81,7 +81,7 @@ impl RelativeStrengthIndex {
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, tick: &TradeTick) {
-        self.update_raw((&tick.price).into());
+    fn py_handle_trade_tick(&mut self, trade: &TradeTick) {
+        self.update_raw((&trade.price).into());
     }
 }

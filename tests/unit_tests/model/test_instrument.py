@@ -24,6 +24,7 @@ from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.currencies import USDT
 from nautilus_trader.model.enums import option_kind_from_str
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import BinaryOption
 from nautilus_trader.model.instruments import CryptoFuture
 from nautilus_trader.model.instruments import CryptoPerpetual
 from nautilus_trader.model.instruments import Equity
@@ -168,11 +169,12 @@ class TestInstrument:
             "quote_currency": "USD",
             "settlement_currency": "BTC",
             "is_inverse": True,
-            "lot_size": "1",
             "price_precision": 1,
             "price_increment": "0.5",
             "size_precision": 0,
             "size_increment": "1",
+            "multiplier": "1",
+            "lot_size": "1",
             "max_quantity": None,
             "min_quantity": None,
             "max_notional": "10000000.00 USD",
@@ -208,6 +210,7 @@ class TestInstrument:
             "price_increment": "0.01",
             "size_precision": 6,
             "size_increment": "0.000001",
+            "multiplier": "1",
             "lot_size": "1",
             "max_quantity": "9000.000000",
             "min_quantity": "0.000001",
@@ -558,3 +561,14 @@ def test_pyo3_option_to_legacy_option() -> None:
     # Assert
     assert isinstance(instrument, OptionsContract)
     assert instrument.id == InstrumentId.from_str("AAPL211217C00150000.OPRA")
+
+
+def test_binary_option_dict_round_trip() -> None:
+    # Arrange
+    instrument = TestInstrumentProvider.binary_option()
+
+    # Act
+    from_dict = BinaryOption.from_dict(BinaryOption.to_dict(instrument))
+
+    # Assert
+    assert instrument == from_dict

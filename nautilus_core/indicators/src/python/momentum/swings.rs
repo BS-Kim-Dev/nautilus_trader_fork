@@ -22,8 +22,8 @@ use crate::{average::MovingAverageType, indicator::Indicator, momentum::swings::
 #[pymethods]
 impl Swings {
     #[new]
-    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> PyResult<Self> {
-        Self::new(period).map_err(to_pyvalue_err)
+    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> Self {
+        Self::new(period)
     }
 
     fn __repr__(&self) -> String {
@@ -120,12 +120,12 @@ impl Swings {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

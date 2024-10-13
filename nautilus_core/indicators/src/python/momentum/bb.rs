@@ -22,8 +22,8 @@ use crate::{average::MovingAverageType, indicator::Indicator, momentum::bb::Boll
 #[pymethods]
 impl BollingerBands {
     #[new]
-    pub fn py_new(period: usize, k: f64, ma_type: Option<MovingAverageType>) -> PyResult<Self> {
-        Self::new(period, k, ma_type).map_err(to_pyvalue_err)
+    pub fn py_new(period: usize, k: f64, ma_type: Option<MovingAverageType>) -> Self {
+        Self::new(period, k, ma_type)
     }
 
     fn __repr__(&self) -> String {
@@ -84,13 +84,13 @@ impl BollingerBands {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, tick: &QuoteTick) {
-        self.handle_quote_tick(tick);
+    fn py_handle_quote_tick(&mut self, quote: &QuoteTick) {
+        self.handle_quote(quote);
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, tick: &TradeTick) {
-        self.handle_trade_tick(tick);
+    fn py_handle_trade_tick(&mut self, trade: &TradeTick) {
+        self.handle_trade(trade);
     }
 
     #[pyo3(name = "handle_bar")]

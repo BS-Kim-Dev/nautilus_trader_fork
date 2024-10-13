@@ -29,6 +29,7 @@ use futures_util::{
 use hyper::header::HeaderName;
 use nautilus_core::python::{to_pyruntime_err, to_pyvalue_err};
 use pyo3::{prelude::*, types::PyBytes};
+use rustls::crypto::{aws_lc_rs, CryptoProvider};
 use tokio::{net::TcpStream, sync::Mutex, task, time::sleep};
 use tokio_tungstenite::{
     connect_async,
@@ -36,6 +37,7 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 
+use crate::ratelimiter::{clock::MonotonicClock, quota::Quota, RateLimiter};
 type MessageWriter = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 type SharedMessageWriter =
     Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>;
@@ -80,6 +82,15 @@ struct WebSocketClientInner {
 impl WebSocketClientInner {
     /// Create an inner websocket client.
     pub async fn connect_url(config: WebSocketConfig) -> Result<Self, Error> {
+        if CryptoProvider::get_default().is_none() {
+            tracing::debug!("Installing `aws_lc_rs` cryptographic provider");
+            // An error can occur on install if there is a race condition with another component
+            match aws_lc_rs::default_provider().install_default() {
+                Ok(_) => tracing::debug!("Cryptographic provider installed successfully"),
+                Err(e) => tracing::debug!("Error installing cryptographic provider: {e:?}"),
+            }
+        }
+
         let WebSocketConfig {
             url,
             handler,
@@ -115,9 +126,9 @@ impl WebSocketClientInner {
 
         // Hacky solution to overcome the new `http` trait bounds
         for (key, val) in headers {
-            let header_value = HeaderValue::from_str(&val).unwrap();
+            let header_value = HeaderValue::from_str(&val)?;
             use http::header::HeaderName;
-            let header_name: HeaderName = key.parse().unwrap();
+            let header_name: HeaderName = key.parse()?;
             let header_name_string = header_name.to_string();
             let header_name_str: &'static str = Box::leak(header_name_string.into_boxed_str());
             req_headers.insert(header_name_str, header_value);
@@ -132,7 +143,7 @@ impl WebSocketClientInner {
         message: Option<String>,
         writer: SharedMessageWriter,
     ) -> Option<task::JoinHandle<()>> {
-        tracing::debug!("Started task `heartbeat`");
+        tracing::debug!("Started task 'heartbeat'");
         heartbeat.map(|duration| {
             task::spawn(async move {
                 let duration = Duration::from_secs(duration);
@@ -144,7 +155,7 @@ impl WebSocketClientInner {
                         None => guard.send(Message::Ping(vec![])).await,
                     };
                     match guard_send_response {
-                        Ok(()) => tracing::debug!("Sent ping"),
+                        Ok(()) => tracing::trace!("Sent ping"),
                         Err(e) => tracing::error!("Error sending ping: {e}"),
                     }
                 }
@@ -158,12 +169,12 @@ impl WebSocketClientInner {
         handler: PyObject,
         ping_handler: Option<PyObject>,
     ) -> task::JoinHandle<()> {
-        tracing::debug!("Started task `read`");
+        tracing::debug!("Started task 'read'");
         task::spawn(async move {
             loop {
                 match reader.next().await {
                     Some(Ok(Message::Binary(data))) => {
-                        tracing::debug!("Received message <binary>");
+                        tracing::trace!("Received message <binary>");
                         if let Err(e) =
                             Python::with_gil(|py| handler.call1(py, (PyBytes::new(py, &data),)))
                         {
@@ -173,7 +184,7 @@ impl WebSocketClientInner {
                         continue;
                     }
                     Some(Ok(Message::Text(data))) => {
-                        tracing::debug!("Received message: {data}");
+                        tracing::trace!("Received message: {data}");
                         if let Err(e) = Python::with_gil(|py| {
                             handler.call1(py, (PyBytes::new(py, data.as_bytes()),))
                         }) {
@@ -184,7 +195,7 @@ impl WebSocketClientInner {
                     }
                     Some(Ok(Message::Ping(ping))) => {
                         let payload = String::from_utf8(ping.clone()).expect("Invalid payload");
-                        tracing::debug!("Received ping: {payload}",);
+                        tracing::trace!("Received ping: {payload}",);
                         if let Some(ref handler) = ping_handler {
                             if let Err(e) =
                                 Python::with_gil(|py| handler.call1(py, (PyBytes::new(py, &ping),)))
@@ -196,7 +207,7 @@ impl WebSocketClientInner {
                         continue;
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        tracing::debug!("Received pong");
+                        tracing::trace!("Received pong");
                     }
                     Some(Ok(Message::Close(_))) => {
                         tracing::error!("Received close message - terminating");
@@ -242,8 +253,11 @@ impl WebSocketClientInner {
 
         tracing::debug!("Closing writer");
         let mut write_half = self.writer.lock().await;
-        write_half.close().await.unwrap();
-        tracing::debug!("Closed connection");
+        if let Err(e) = write_half.close().await {
+            tracing::error!("Error closing writer: {e:?}");
+        } else {
+            tracing::debug!("Closed connection");
+        }
     }
 
     /// Reconnect with server.
@@ -251,6 +265,8 @@ impl WebSocketClientInner {
     /// Make a new connection with server. Use the new read and write halves
     /// to update self writer and read and heartbeat tasks.
     pub async fn reconnect(&mut self) -> Result<(), Error> {
+        self.shutdown().await;
+
         let (new_writer, reader) =
             Self::connect_with_server(&self.config.url, self.config.headers.clone()).await?;
         let mut guard = self.writer.lock().await;
@@ -278,6 +294,8 @@ impl WebSocketClientInner {
     /// shutdown or will receive a `Close` frame which will finish it. There
     /// might be some delay between the connection being closed and the client
     /// detecting.
+    #[inline]
+    #[must_use]
     pub fn is_alive(&self) -> bool {
         !self.read_task.is_finished()
     }
@@ -303,6 +321,7 @@ impl Drop for WebSocketClientInner {
     pyo3::pyclass(module = "nautilus_trader.core.nautilus_pyo3.network")
 )]
 pub struct WebSocketClient {
+    pub(crate) rate_limiter: Arc<RateLimiter<String, MonotonicClock>>,
     pub(crate) writer: SharedMessageWriter,
     pub(crate) controller_task: task::JoinHandle<()>,
     pub(crate) disconnect_mode: Arc<AtomicBool>,
@@ -318,6 +337,8 @@ impl WebSocketClient {
         post_connection: Option<PyObject>,
         post_reconnection: Option<PyObject>,
         post_disconnection: Option<PyObject>,
+        keyed_quotas: Option<Vec<(String, Quota)>>,
+        default_quota: Option<Quota>,
     ) -> Result<Self, Error> {
         tracing::debug!("Connecting");
         let inner = WebSocketClientInner::connect_url(config).await?;
@@ -330,6 +351,10 @@ impl WebSocketClient {
             post_reconnection,
             post_disconnection,
         );
+        let rate_limiter = Arc::new(RateLimiter::new_with_quota(
+            default_quota,
+            keyed_quotas.unwrap_or_default(),
+        ));
 
         if let Some(handler) = post_connection {
             Python::with_gil(|py| match handler.call0(py) {
@@ -339,6 +364,7 @@ impl WebSocketClient {
         };
 
         Ok(Self {
+            rate_limiter,
             writer,
             controller_task,
             disconnect_mode,
@@ -375,7 +401,7 @@ impl WebSocketClient {
     }
 
     pub async fn send_bytes(&self, data: Vec<u8>) -> Result<(), Error> {
-        tracing::debug!("Sending bytes: {:?}", data);
+        tracing::trace!("Sending bytes: {data:?}");
         let mut guard = self.writer.lock().await;
         guard.send(Message::Binary(data)).await
     }
@@ -399,8 +425,8 @@ impl WebSocketClient {
                 sleep(Duration::from_millis(100)).await;
 
                 // Check if client needs to disconnect
-                let disconnected = disconnect_mode.load(Ordering::SeqCst);
-                match (disconnected, inner.is_alive()) {
+                let disconnect = disconnect_mode.load(Ordering::SeqCst);
+                match (disconnect, inner.is_alive()) {
                     (false, false) => match inner.reconnect().await {
                         Ok(()) => {
                             tracing::debug!("Reconnected successfully");
@@ -425,17 +451,22 @@ impl WebSocketClient {
                         inner.shutdown().await;
                         if let Some(ref handler) = post_disconnection {
                             Python::with_gil(|py| match handler.call0(py) {
-                                Ok(_) => tracing::debug!("Called `post_reconnection` handler"),
+                                Ok(_) => tracing::debug!("Called `post_disconnection` handler"),
                                 Err(e) => {
                                     tracing::error!(
-                                        "Error calling `post_reconnection` handler: {e}"
+                                        "Error calling `post_disconnection` handler: {e}"
                                     );
                                 }
                             });
                         }
                         break;
                     }
-                    (true, false) => break,
+                    // Close the heartbeat task on disconnect if the connection is already closed
+                    (true, false) => {
+                        tracing::debug!("Inner client is disconnected");
+                        tracing::debug!("Shutting down inner client to clean up running tasks");
+                        inner.shutdown().await
+                    }
                     _ => (),
                 }
             }

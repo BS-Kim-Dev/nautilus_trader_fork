@@ -43,6 +43,7 @@ from nautilus_trader.serialization.base cimport Serializer
 cdef class Clock:
     cpdef double timestamp(self)
     cpdef uint64_t timestamp_ms(self)
+    cpdef uint64_t timestamp_us(self)
     cpdef uint64_t timestamp_ns(self)
     cpdef datetime utc_now(self)
     cpdef datetime local_now(self, tzinfo tz=*)
@@ -53,6 +54,7 @@ cdef class Clock:
         str name,
         datetime alert_time,
         callback: Callable[[TimeEvent], None]=*,
+        bint override=*,
     )
     cpdef void set_time_alert_ns(
         self,
@@ -255,7 +257,6 @@ cdef class MessageBus:
     cdef dict[UUID4, object] _correlation_index
     cdef tuple[type] _publishable_types
     cdef set[type] _streaming_types
-    cdef bint _has_backing
     cdef bint _resolved
 
     cdef readonly TraderId trader_id
@@ -264,10 +265,6 @@ cdef class MessageBus:
     """The serializer for the bus.\n\n:returns: `Serializer`"""
     cdef readonly bint has_backing
     """If the message bus has a database backing.\n\n:returns: `bool`"""
-    cdef readonly bint snapshot_orders
-    """If order state snapshots should be published externally.\n\n:returns: `bool`"""
-    cdef readonly bint snapshot_positions
-    """If position state snapshots should be published externally.\n\n:returns: `bool`"""
     cdef readonly uint64_t sent_count
     """The count of messages sent through the bus.\n\n:returns: `uint64_t`"""
     cdef readonly uint64_t req_count

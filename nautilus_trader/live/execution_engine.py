@@ -17,6 +17,7 @@ import asyncio
 import math
 import uuid
 from asyncio import Queue
+from collections import Counter
 from decimal import Decimal
 from typing import Any, Final
 
@@ -118,6 +119,7 @@ class LiveExecutionEngine(ExecutionEngine):
         self._loop: asyncio.AbstractEventLoop = loop
         self._cmd_queue: asyncio.Queue = Queue(maxsize=config.qsize)
         self._evt_queue: asyncio.Queue = Queue(maxsize=config.qsize)
+        self._inflight_check_retries: Counter[ClientOrderId] = Counter()
 
         # Async tasks
         self._cmd_queue_task: asyncio.Task | None = None
@@ -141,6 +143,7 @@ class LiveExecutionEngine(ExecutionEngine):
         self._log.info(f"{config.filter_position_reports=}", LogColor.BLUE)
         self._log.info(f"{config.inflight_check_interval_ms=}", LogColor.BLUE)
         self._log.info(f"{config.inflight_check_threshold_ms=}", LogColor.BLUE)
+        self._log.info(f"{config.inflight_check_retries=}", LogColor.BLUE)
 
         # Register endpoints
         self._msgbus.register(endpoint="ExecEngine.reconcile_report", handler=self.reconcile_report)
@@ -252,11 +255,11 @@ class LiveExecutionEngine(ExecutionEngine):
         self._kill = True
         self.stop()
         if self._cmd_queue_task:
-            self._log.debug(f"Canceling {self._cmd_queue_task.get_name()}")
+            self._log.debug(f"Canceling task '{self._cmd_queue_task.get_name()}'")
             self._cmd_queue_task.cancel()
             self._cmd_queue_task = None
         if self._evt_queue_task:
-            self._log.debug(f"Canceling {self._evt_queue_task.get_name()}")
+            self._log.debug(f"Canceling task '{self._evt_queue_task.get_name()}'")
             self._evt_queue_task.cancel()
             self._evt_queue_task = None
 
@@ -334,8 +337,8 @@ class LiveExecutionEngine(ExecutionEngine):
 
         self._cmd_queue_task = self._loop.create_task(self._run_cmd_queue(), name="cmd_queue")
         self._evt_queue_task = self._loop.create_task(self._run_evt_queue(), name="evt_queue")
-        self._log.debug(f"Scheduled {self._cmd_queue_task}")
-        self._log.debug(f"Scheduled {self._evt_queue_task}")
+        self._log.debug(f"Scheduled task '{self._cmd_queue_task.get_name()}'")
+        self._log.debug(f"Scheduled task '{self._evt_queue_task.get_name()}'")
 
         if not self._inflight_check_task:
             if self.inflight_check_interval_ms > 0:
@@ -343,11 +346,11 @@ class LiveExecutionEngine(ExecutionEngine):
                     self._inflight_check_loop(),
                     name="inflight_check",
                 )
-                self._log.debug(f"Scheduled {self._inflight_check_task}")
+                self._log.debug(f"Scheduled task '{self._inflight_check_task.get_name()}'")
 
     def _on_stop(self) -> None:
         if self._inflight_check_task:
-            self._log.info("Canceling in-flight check task")
+            self._log.debug(f"Canceling task '{self._inflight_check_task.get_name()}'")
             self._inflight_check_task.cancel()
             self._inflight_check_task = None
 
@@ -419,6 +422,9 @@ class LiveExecutionEngine(ExecutionEngine):
         inflight_len = len(inflight_orders)
         self._log.debug(f"Found {inflight_len} order{'' if inflight_len == 1 else 's'} in-flight")
         for order in inflight_orders:
+            retries = self._inflight_check_retries[order.client_order_id]
+            if retries >= self.config.inflight_check_retries:
+                continue
             ts_now = self._clock.timestamp_ns()
             ts_init_last = order.last_event.ts_event
             self._log.debug(f"Checking in-flight order: {ts_now=}, {ts_init_last=}, {order=}...")
@@ -434,6 +440,7 @@ class LiveExecutionEngine(ExecutionEngine):
                     ts_init=self._clock.timestamp_ns(),
                 )
                 self._execute_command(query)
+                self._inflight_check_retries[order.client_order_id] += 1
 
     # -- RECONCILIATION -------------------------------------------------------------------------------
 
@@ -546,7 +553,7 @@ class LiveExecutionEngine(ExecutionEngine):
             True if reconciliation successful, else False.
 
         """
-        self._log.debug(f"[RECV][RPT] {report}")
+        self._log.debug(f"<--[RPT] {report}")
         self.report_count += 1
 
         self._log.info(f"Reconciling {report}", color=LogColor.BLUE)
@@ -588,7 +595,7 @@ class LiveExecutionEngine(ExecutionEngine):
         self,
         mass_status: ExecutionMassStatus,
     ) -> bool:
-        self._log.debug(f"[RECV][RPT] {mass_status}")
+        self._log.debug(f"<--[RPT] {mass_status}")
         self.report_count += 1
 
         self._log.info(
@@ -655,6 +662,9 @@ class LiveExecutionEngine(ExecutionEngine):
                 client_order_id = self._generate_client_order_id()
             # Assign to report
             report.client_order_id = client_order_id
+
+        # Reset retry count
+        self._inflight_check_retries.pop(client_order_id, None)
 
         self._log.info(f"Reconciling order for {client_order_id!r}", LogColor.BLUE)
 
@@ -731,10 +741,17 @@ class LiveExecutionEngine(ExecutionEngine):
             # state, or if commissions differed from the default.
             fill: OrderFilled = self._generate_inferred_fill(order, report, instrument)
             self._handle_event(fill)
-            assert report.filled_qty == order.filled_qty
+            if report.filled_qty != order.filled_qty:
+                self._log.error(
+                    f"report.filled_qty {report.filled_qty} != order.filled_qty {order.filled_qty}, "
+                    "this could potentially be caused by corrupted or incomplete cached state",
+                )
+                return False  # Failed
+
             if report.avg_px is not None and not math.isclose(report.avg_px, order.avg_px):
                 self._log.warning(
-                    f"report.avg_px {report.avg_px} != order.avg_px {order.avg_px}",
+                    f"report.avg_px {report.avg_px} != order.avg_px {order.avg_px}, "
+                    "this could potentially be caused by information loss due to inferred fills",
                 )
 
         return True  # Reconciled

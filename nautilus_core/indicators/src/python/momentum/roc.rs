@@ -22,8 +22,8 @@ use crate::{average::MovingAverageType, indicator::Indicator, momentum::roc::Rat
 #[pymethods]
 impl RateOfChange {
     #[new]
-    pub fn py_new(period: usize, use_log: Option<bool>) -> PyResult<Self> {
-        Self::new(period, use_log).map_err(to_pyvalue_err)
+    pub fn py_new(period: usize, use_log: Option<bool>) -> Self {
+        Self::new(period, use_log)
     }
 
     fn __repr__(&self) -> String {
@@ -72,12 +72,12 @@ impl RateOfChange {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

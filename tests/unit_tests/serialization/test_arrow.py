@@ -76,6 +76,7 @@ class TestArrowSerializer:
             AUDUSD_SIM.id,
             OrderSide.BUY,
             Quantity.from_int(100_000),
+            tags=["tag-01", "tag-02", "tag-03"],
         )
         self.order_submitted = copy.copy(self.order)
         self.order_submitted.apply(TestEventStubs.order_submitted(self.order))
@@ -445,12 +446,15 @@ class TestArrowSerializer:
     @pytest.mark.parametrize(
         "instrument",
         [
+            TestInstrumentProvider.audusd_cfd(),
             TestInstrumentProvider.xbtusd_bitmex(),
             TestInstrumentProvider.btcusdt_future_binance(),
             TestInstrumentProvider.btcusdt_binance(),
             TestInstrumentProvider.equity(),
             TestInstrumentProvider.future(),
             TestInstrumentProvider.aapl_option(),
+            TestInstrumentProvider.betting_instrument(),
+            TestInstrumentProvider.binary_option(),
         ],
     )
     def test_serialize_and_deserialize_instruments(self, instrument):

@@ -26,6 +26,7 @@ from nautilus_trader.model.data import OrderBookDepth10
 from nautilus_trader.model.data import capsule_to_data
 from nautilus_trader.model.enums import BookAction
 from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.enums import RecordFlag
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.test_kit.rust.data_pyo3 import TestDataProviderPyo3
@@ -281,9 +282,9 @@ def test_delta_clear() -> None:
     # Arrange, Act
     delta = OrderBookDelta.clear(
         instrument_id=AUDUSD,
+        sequence=42,
         ts_event=0,
         ts_init=1_000_000_000,
-        sequence=42,
     )
 
     # Assert
@@ -475,6 +476,61 @@ def test_deltas_hash_str_and_repr() -> None:
     )
 
 
+def test_deltas_batching() -> None:
+    # Arrange
+    delta1 = TestDataStubs.order_book_delta(flags=0)
+    delta2 = TestDataStubs.order_book_delta(flags=RecordFlag.F_LAST)
+    delta3 = TestDataStubs.order_book_delta(flags=0)
+    delta4 = TestDataStubs.order_book_delta(flags=0)
+    delta5 = TestDataStubs.order_book_delta(flags=RecordFlag.F_LAST)
+
+    # Act
+    batches = OrderBookDeltas.batch(
+        [
+            delta1,
+            delta2,
+            delta3,
+            delta4,
+            delta5,
+        ],
+    )
+
+    # Assert
+    assert len(batches) == 2
+    assert isinstance(batches[0], OrderBookDeltas)
+    assert isinstance(batches[1], OrderBookDeltas)
+
+
+def test_deltas_batching_with_remainder() -> None:
+    # Arrange
+    delta1 = TestDataStubs.order_book_delta(flags=0)
+    delta2 = TestDataStubs.order_book_delta(flags=RecordFlag.F_LAST)
+    delta3 = TestDataStubs.order_book_delta(flags=0)
+    delta4 = TestDataStubs.order_book_delta(flags=0)
+    delta5 = TestDataStubs.order_book_delta(flags=RecordFlag.F_LAST)
+    delta6 = TestDataStubs.order_book_delta(flags=0)
+    delta7 = TestDataStubs.order_book_delta(flags=0)
+
+    # Act
+    batches = OrderBookDeltas.batch(
+        [
+            delta1,
+            delta2,
+            delta3,
+            delta4,
+            delta5,
+            delta6,
+            delta7,
+        ],
+    )
+
+    # Assert
+    assert len(batches) == 3
+    assert isinstance(batches[0], OrderBookDeltas)
+    assert isinstance(batches[1], OrderBookDeltas)
+    assert isinstance(batches[2], OrderBookDeltas)
+
+
 def test_deltas_to_dict_from_dict_round_trip() -> None:
     # Arrange
     order1 = BookOrder(
@@ -634,6 +690,28 @@ def test_depth10_new() -> None:
         sequence=1,
         ts_event=2,
         ts_init=3,
+    )
+
+    # Assert
+    assert depth.instrument_id == instrument_id
+    assert len(depth.bids) == 10
+    assert len(depth.asks) == 10
+    assert depth.flags == 0
+    assert depth.sequence == 1
+    assert depth.ts_event == 2
+    assert depth.ts_init == 3
+
+
+def test_depth10_partial_levels() -> None:
+    # Arrange, Act
+    instrument_id = TestIdStubs.aapl_xnas_id()
+    depth = TestDataStubs.order_book_depth10(
+        instrument_id=instrument_id,
+        flags=0,
+        sequence=1,
+        ts_event=2,
+        ts_init=3,
+        levels=3,
     )
 
     # Assert

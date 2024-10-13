@@ -24,7 +24,7 @@
 //! depending on the intended use case, i.e. whether to provide Python bindings
 //! for the main `nautilus_trader` Python package, or as part of a Rust only build.
 //!
-//! - `ffi`: Enables the C foreign function interface (FFI) from `cbindgen`
+//! - `ffi`: Enables the C foreign function interface (FFI) from `cbindgen`.
 
 #![allow(deprecated)] // TODO: Temporary for pyo3 upgrade
 
@@ -65,6 +65,12 @@ fn nautilus_pyo3(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
     re_export_module_attributes(m, n)?;
 
+    let n = "crypto";
+    let submodule = pyo3::wrap_pymodule!(nautilus_adapters::crypto::python::crypto);
+    m.add_wrapped(submodule)?;
+    sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
+    re_export_module_attributes(m, n)?;
+
     let n = "model";
     let submodule = pyo3::wrap_pymodule!(nautilus_model::python::model);
     m.add_wrapped(submodule)?;
@@ -91,6 +97,18 @@ fn nautilus_pyo3(py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     let n = "persistence";
     let submodule = pyo3::wrap_pymodule!(nautilus_persistence::python::persistence);
+    m.add_wrapped(submodule)?;
+    sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
+    re_export_module_attributes(m, n)?;
+
+    let n = "test_kit";
+    let submodule = pyo3::wrap_pymodule!(nautilus_test_kit::python::test_kit);
+    m.add_wrapped(submodule)?;
+    sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
+    re_export_module_attributes(m, n)?;
+
+    let n = "tardis";
+    let submodule = pyo3::wrap_pymodule!(nautilus_adapters::tardis::python::tardis);
     m.add_wrapped(submodule)?;
     sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
     re_export_module_attributes(m, n)?;

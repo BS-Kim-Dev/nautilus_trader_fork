@@ -110,7 +110,7 @@ cdef class Quantity:
     """
 
     def __init__(self, double value, uint8_t precision) -> None:
-        Condition.true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
+        Condition.is_true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
         if isnan(value):
             raise ValueError(
                 f"invalid `value`, was {value:_}",
@@ -394,14 +394,14 @@ cdef class Quantity:
     @staticmethod
     def from_raw(int64_t raw, uint8_t precision) -> Quantity:
         """
-        Return a quantity from the given `raw` fixed precision integer and `precision`.
+        Return a quantity from the given `raw` fixed-point integer and `precision`.
 
         Handles up to 9 decimals of precision.
 
         Parameters
         ----------
         raw : int64_t
-            The raw fixed precision quantity value.
+            The raw fixed-point quantity value.
         precision : uint8_t
             The precision for the quantity. Use a precision of 0 for whole numbers
             (no fractional units).
@@ -422,7 +422,7 @@ cdef class Quantity:
         Small `raw` values can produce a zero quantity depending on the `precision`.
 
         """
-        Condition.true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
+        Condition.is_true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
         return Quantity.from_raw_c(raw, precision)
 
     @staticmethod
@@ -552,7 +552,7 @@ cdef class Price:
     """
 
     def __init__(self, double value, uint8_t precision) -> None:
-        Condition.true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
+        Condition.is_true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
         if isnan(value):
             raise ValueError(
                 f"invalid `value`, was {value:_}",
@@ -794,14 +794,14 @@ cdef class Price:
     @staticmethod
     def from_raw(int64_t raw, uint8_t precision) -> Price:
         """
-        Return a price from the given `raw` fixed precision integer and `precision`.
+        Return a price from the given `raw` fixed-point integer and `precision`.
 
         Handles up to 9 decimals of precision.
 
         Parameters
         ----------
         raw : int64_t
-            The raw fixed precision price value.
+            The raw fixed-point price value.
         precision : uint8_t
             The precision for the price. Use a precision of 0 for whole numbers
             (no fractional units).
@@ -822,7 +822,7 @@ cdef class Price:
         Small `raw` values can produce a zero price depending on the `precision`.
 
         """
-        Condition.true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
+        Condition.is_true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
         return Price.from_raw_c(raw, precision)
 
     @staticmethod
@@ -961,23 +961,23 @@ cdef class Money:
         self._mem = money_from_raw(state[0], currency._mem)
 
     def __eq__(self, Money other) -> bool:
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return self._mem.raw == other._mem.raw
 
     def __lt__(self, Money other) -> bool:
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return self._mem.raw < other._mem.raw
 
     def __le__(self, Money other) -> bool:
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return self._mem.raw <= other._mem.raw
 
     def __gt__(self, Money other) -> bool:
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return self._mem.raw > other._mem.raw
 
     def __ge__(self, Money other) -> bool:
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return self._mem.raw >= other._mem.raw
 
     def __add__(a, b) -> decimal.Decimal | float:
@@ -1132,19 +1132,19 @@ cdef class Money:
         return self._mem.raw > 0
 
     cdef Money add(self, Money other):
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return Money.from_raw_c(self._mem.raw + other._mem.raw, self.currency)
 
     cdef Money sub(self, Money other):
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         return Money.from_raw_c(self._mem.raw - other._mem.raw, self.currency)
 
     cdef void add_assign(self, Money other):
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         self._mem.raw += other._mem.raw
 
     cdef void sub_assign(self, Money other):
-        Condition.true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
+        Condition.is_true(self._mem.currency.code == other._mem.currency.code, "currency != other.currency")
         self._mem.raw -= other._mem.raw
 
     cdef int64_t raw_int64_c(self):
@@ -1156,12 +1156,12 @@ cdef class Money:
     @staticmethod
     def from_raw(int64_t raw, Currency currency) -> Money:
         """
-        Return money from the given `raw` fixed precision integer and `currency`.
+        Return money from the given `raw` fixed-point integer and `currency`.
 
         Parameters
         ----------
         raw : int64_t
-            The raw fixed precision money amount.
+            The raw fixed-point money amount.
         currency : Currency
             The currency of the money.
 
@@ -1289,7 +1289,7 @@ cdef class Currency:
     ) -> None:
         Condition.valid_string(code, "code")
         Condition.valid_string(name, "name")
-        Condition.true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
+        Condition.is_true(precision <= 9, f"invalid `precision` greater than max 9, was {precision}")
 
         self._mem = currency_from_py(
             pystr_to_cstr(code),
@@ -1588,10 +1588,10 @@ cdef class AccountBalance:
     ) -> None:
         Condition.equal(total.currency, locked.currency, "total.currency", "locked.currency")
         Condition.equal(total.currency, free.currency, "total.currency", "free.currency")
-        Condition.true(total.raw_int64_c() >= 0, "`total` amount was negative")
-        Condition.true(locked.raw_int64_c() >= 0, "`locked` amount was negative")
-        Condition.true(free.raw_int64_c() >= 0, "`free` amount was negative")
-        Condition.true(total.raw_int64_c() - locked.raw_int64_c() == free.raw_int64_c(), "`total` - `locked` != `free` amount")
+        Condition.is_true(total.raw_int64_c() >= 0, "`total` amount was negative")
+        Condition.is_true(locked.raw_int64_c() >= 0, "`locked` amount was negative")
+        Condition.is_true(free.raw_int64_c() >= 0, "`free` amount was negative")
+        Condition.is_true(total.raw_int64_c() - locked.raw_int64_c() == free.raw_int64_c(), "`total` - `locked` != `free` amount")
 
         self.total = total
         self.locked = locked
@@ -1688,8 +1688,8 @@ cdef class MarginBalance:
         InstrumentId instrument_id = None,
     ) -> None:
         Condition.equal(initial.currency, maintenance.currency, "initial.currency", "maintenance.currency")
-        Condition.true(initial.raw_int64_c() >= 0, "initial margin was negative")
-        Condition.true(maintenance.raw_int64_c() >= 0, "maintenance margin was negative")
+        Condition.is_true(initial.raw_int64_c() >= 0, "initial margin was negative")
+        Condition.is_true(maintenance.raw_int64_c() >= 0, "maintenance margin was negative")
 
         self.initial = initial
         self.maintenance = maintenance

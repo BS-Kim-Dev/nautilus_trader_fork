@@ -69,7 +69,7 @@ impl QuoteTick {
         let ts_event: u64 = obj.getattr("ts_event")?.extract()?;
         let ts_init: u64 = obj.getattr("ts_init")?.extract()?;
 
-        Self::new(
+        Self::new_checked(
             instrument_id,
             bid_price,
             ask_price,
@@ -94,7 +94,7 @@ impl QuoteTick {
         ts_event: u64,
         ts_init: u64,
     ) -> PyResult<Self> {
-        Self::new(
+        Self::new_checked(
             instrument_id,
             bid_price,
             ask_price,
@@ -169,7 +169,7 @@ impl QuoteTick {
 
     #[staticmethod]
     fn _safe_constructor() -> PyResult<Self> {
-        Ok(Self::new(
+        Self::new_checked(
             InstrumentId::from("NULL.NULL"),
             Price::zero(0),
             Price::zero(0),
@@ -178,7 +178,7 @@ impl QuoteTick {
             UnixNanos::default(),
             UnixNanos::default(),
         )
-        .unwrap()) // Safe default
+        .map_err(to_pyvalue_err)
     }
 
     fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> Py<PyAny> {
@@ -293,7 +293,7 @@ impl QuoteTick {
         ts_event: u64,
         ts_init: u64,
     ) -> PyResult<Self> {
-        Self::new(
+        Self::new_checked(
             instrument_id,
             Price::from_raw(bid_price_raw, bid_price_prec),
             Price::from_raw(ask_price_raw, ask_price_prec),
@@ -389,12 +389,12 @@ mod tests {
     use pyo3::{IntoPy, Python};
     use rstest::rstest;
 
-    use crate::data::{quote::QuoteTick, stubs::quote_tick_ethusdt_binance};
+    use crate::data::{quote::QuoteTick, stubs::quote_ethusdt_binance};
 
     #[rstest]
-    fn test_as_dict(quote_tick_ethusdt_binance: QuoteTick) {
+    fn test_as_dict(quote_ethusdt_binance: QuoteTick) {
         pyo3::prepare_freethreaded_python();
-        let quote = quote_tick_ethusdt_binance;
+        let quote = quote_ethusdt_binance;
 
         Python::with_gil(|py| {
             let dict_string = quote.py_as_dict(py).unwrap().to_string();
@@ -404,9 +404,9 @@ mod tests {
     }
 
     #[rstest]
-    fn test_from_dict(quote_tick_ethusdt_binance: QuoteTick) {
+    fn test_from_dict(quote_ethusdt_binance: QuoteTick) {
         pyo3::prepare_freethreaded_python();
-        let quote = quote_tick_ethusdt_binance;
+        let quote = quote_ethusdt_binance;
 
         Python::with_gil(|py| {
             let dict = quote.py_as_dict(py).unwrap();
@@ -416,9 +416,9 @@ mod tests {
     }
 
     #[rstest]
-    fn test_from_pyobject(quote_tick_ethusdt_binance: QuoteTick) {
+    fn test_from_pyobject(quote_ethusdt_binance: QuoteTick) {
         pyo3::prepare_freethreaded_python();
-        let quote = quote_tick_ethusdt_binance;
+        let quote = quote_ethusdt_binance;
 
         Python::with_gil(|py| {
             let tick_pyobject = quote.into_py(py);

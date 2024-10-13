@@ -24,8 +24,8 @@ use crate::{
 #[pymethods]
 impl VerticalHorizontalFilter {
     #[new]
-    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> PyResult<Self> {
-        Self::new(period, ma_type).map_err(to_pyvalue_err)
+    pub fn py_new(period: usize, ma_type: Option<MovingAverageType>) -> Self {
+        Self::new(period, ma_type)
     }
 
     fn __repr__(&self) -> String {
@@ -68,12 +68,12 @@ impl VerticalHorizontalFilter {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

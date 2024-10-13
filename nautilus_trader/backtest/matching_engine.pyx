@@ -15,9 +15,6 @@
 
 import uuid
 
-
-# from nautilus_trader.backtest.auction import default_auction_match
-
 from cpython.datetime cimport timedelta
 from libc.stdint cimport uint64_t
 
@@ -65,8 +62,10 @@ from nautilus_trader.execution.trailing cimport TrailingStopCalculator
 from nautilus_trader.model.book cimport OrderBook
 from nautilus_trader.model.data cimport BarType
 from nautilus_trader.model.data cimport BookOrder
+from nautilus_trader.model.data cimport InstrumentClose
 from nautilus_trader.model.data cimport QuoteTick
 from nautilus_trader.model.data cimport TradeTick
+from nautilus_trader.model.enums import InstrumentCloseType
 from nautilus_trader.model.events.order cimport OrderAccepted
 from nautilus_trader.model.events.order cimport OrderCanceled
 from nautilus_trader.model.events.order cimport OrderCancelRejected
@@ -78,6 +77,7 @@ from nautilus_trader.model.events.order cimport OrderTriggered
 from nautilus_trader.model.events.order cimport OrderUpdated
 from nautilus_trader.model.functions cimport liquidity_side_to_str
 from nautilus_trader.model.functions cimport order_type_to_str
+from nautilus_trader.model.functions cimport time_in_force_to_str
 from nautilus_trader.model.identifiers cimport AccountId
 from nautilus_trader.model.identifiers cimport ClientOrderId
 from nautilus_trader.model.identifiers cimport InstrumentId
@@ -189,6 +189,7 @@ cdef class OrderMatchingEngine:
         self.market_status = MarketStatus.OPEN
 
         self._instrument_has_expiration = instrument.instrument_class in EXPIRING_INSTRUMENT_TYPES
+        self._instrument_close = None
         self._bar_execution = bar_execution
         self._reject_stop_orders = reject_stop_orders
         self._support_gtd_orders = support_gtd_orders
@@ -371,8 +372,7 @@ cdef class OrderMatchingEngine:
         if is_logging_initialized():
             self._log.debug(f"Processing {repr(delta)}")
 
-        if self.book_type in (BookType.L2_MBP, BookType.L3_MBO):
-            self._book.apply_delta(delta)
+        self._book.apply_delta(delta)
 
         # TODO: WIP to introduce flags
         # if data.flags == TimeInForce.GTC:
@@ -401,8 +401,7 @@ cdef class OrderMatchingEngine:
         if is_logging_initialized():
             self._log.debug(f"Processing {repr(deltas)}")
 
-        if self.book_type in (BookType.L2_MBP, BookType.L3_MBO):
-            self._book.apply_deltas(deltas)
+        self._book.apply_deltas(deltas)
 
         # TODO: WIP to introduce flags
         # if data.flags == TimeInForce.GTC:
@@ -420,7 +419,7 @@ cdef class OrderMatchingEngine:
         """
         Process the exchanges market for the given quote tick.
 
-        Market dynamics are simulated by auctioning open orders.
+        The internal order book will only be updated if the venue `book_type` is 'L1_MBP'.
 
         Parameters
         ----------
@@ -442,7 +441,7 @@ cdef class OrderMatchingEngine:
         """
         Process the exchanges market for the given trade tick.
 
-        Market dynamics are simulated by auctioning open orders.
+        The internal order book will only be updated if the venue `book_type` is 'L1_MBP'.
 
         Parameters
         ----------
@@ -483,7 +482,7 @@ cdef class OrderMatchingEngine:
             return  # Can only process an L1 book with bars
 
         cdef BarType bar_type = bar.bar_type
-        if bar_type._mem.aggregation_source == AggregationSource.INTERNAL:
+        if bar_type.aggregation_source == AggregationSource.INTERNAL:
             return  # Do not process internally aggregated bars
 
         cdef InstrumentId instrument_id = bar_type.instrument_id
@@ -552,6 +551,24 @@ cdef class OrderMatchingEngine:
         #     # Market closed - nothing to do for now
         #     # TODO - should we implement some sort of closing price message here?
         #     self.market_status = status
+
+    cpdef void process_instrument_close(self, InstrumentClose close):
+        """
+        Process the instrument close.
+
+        Parameters
+        ----------
+        close : InstrumentClose
+            The close price to process.
+
+        """
+        if close.instrument_id != self.instrument.id:
+            self._log.warning(f"Received instrument close for unknown instrument_id: {close.instrument_id}")
+            return
+
+        if close.close_type == InstrumentCloseType.CONTRACT_EXPIRED:
+            self._instrument_close = close
+            self.iterate(close.ts_init)
 
     cpdef void process_auction_book(self, OrderBook book):
         Condition.not_none(book, "book")
@@ -881,7 +898,12 @@ cdef class OrderMatchingEngine:
     cdef void _process_market_order(self, MarketOrder order):
         # Check AT_THE_OPEN/AT_THE_CLOSE time in force
         if order.time_in_force == TimeInForce.AT_THE_OPEN or order.time_in_force == TimeInForce.AT_THE_CLOSE:
-            self._process_auction_market_order(order)
+            self._log.error(
+                f"Market auction for time in force {time_in_force_to_str(order.time_in_force)} "
+                "is not currently supported",
+            )
+            # TODO: This functionality needs reimplementing
+            # self._process_auction_market_order(order)
             return
 
         # Check market exists
@@ -1328,7 +1350,7 @@ cdef class OrderMatchingEngine:
         self._has_targets = False
 
         # Instrument expiration
-        if self._instrument_has_expiration and timestamp_ns >= self.instrument.expiration_ns:
+        if (self._instrument_has_expiration and timestamp_ns >= self.instrument.expiration_ns) or self._instrument_close is not None:
             self._log.info(f"{self.instrument.id} reached expiration")
 
             # Cancel all open orders
@@ -1374,7 +1396,7 @@ cdef class OrderMatchingEngine:
             If the `order` does not have a LIMIT `price`.
 
         """
-        Condition.true(order.has_price_c(), "order has no limit `price`")
+        Condition.is_true(order.has_price_c(), "order has no limit `price`")
 
         cdef list fills = self._book.simulate_fills(
             order,
@@ -1580,7 +1602,7 @@ cdef class OrderMatchingEngine:
             If the `order` does not have a LIMIT `price`.
 
         """
-        Condition.true(order.has_price_c(), "order has no limit `price`")
+        Condition.is_true(order.has_price_c(), "order has no limit `price`")
 
         cdef Quantity cached_filled_qty = self._cached_filled_qty.get(order.client_order_id)
         if cached_filled_qty is not None and cached_filled_qty._mem.raw >= order.quantity._mem.raw:

@@ -37,7 +37,7 @@ use nautilus_model::{
     instruments::any::InstrumentAny,
 };
 use tokio::{
-    sync::mpsc::{self, error::TryRecvError},
+    sync::mpsc::error::TryRecvError,
     time::{timeout, Duration},
 };
 
@@ -77,8 +77,8 @@ pub enum LiveMessage {
 pub struct DatabentoFeedHandler {
     key: String,
     dataset: String,
-    cmd_rx: mpsc::UnboundedReceiver<LiveCommand>,
-    msg_tx: mpsc::Sender<LiveMessage>,
+    cmd_rx: tokio::sync::mpsc::UnboundedReceiver<LiveCommand>,
+    msg_tx: tokio::sync::mpsc::Sender<LiveMessage>,
     publisher_venue_map: IndexMap<PublisherId, Venue>,
     replay: bool,
 }
@@ -89,8 +89,8 @@ impl DatabentoFeedHandler {
     pub const fn new(
         key: String,
         dataset: String,
-        rx: mpsc::UnboundedReceiver<LiveCommand>,
-        tx: mpsc::Sender<LiveMessage>,
+        rx: tokio::sync::mpsc::UnboundedReceiver<LiveCommand>,
+        tx: tokio::sync::mpsc::Sender<LiveMessage>,
         publisher_venue_map: IndexMap<PublisherId, Venue>,
     ) -> Self {
         Self {
@@ -147,7 +147,7 @@ impl DatabentoFeedHandler {
 
             match self.cmd_rx.try_recv() {
                 Ok(cmd) => {
-                    tracing::debug!("Received command: {:?}", cmd);
+                    tracing::debug!("Received command: {cmd:?}");
                     match cmd {
                         LiveCommand::Subscribe(sub) => {
                             if !self.replay & sub.start.is_some() {
@@ -269,10 +269,8 @@ impl DatabentoFeedHandler {
                         // TODO: Temporary for debugging
                         deltas_count += 1;
                         tracing::trace!(
-                            "Buffering delta: {} {} {:?} flags={}",
-                            deltas_count,
+                            "Buffering delta: {deltas_count} {} {buffering_start:?} flags={}",
                             delta.ts_event,
-                            buffering_start,
                             msg.flags.raw(),
                         );
 

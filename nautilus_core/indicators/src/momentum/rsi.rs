@@ -64,11 +64,11 @@ impl Indicator for RelativeStrengthIndex {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, quote: &QuoteTick) {
+    fn handle_quote(&mut self, quote: &QuoteTick) {
         self.update_raw(quote.extract_price(PriceType::Mid).into());
     }
 
-    fn handle_trade_tick(&mut self, trade: &TradeTick) {
+    fn handle_trade(&mut self, trade: &TradeTick) {
         self.update_raw((trade.price).into());
     }
 
@@ -87,8 +87,9 @@ impl Indicator for RelativeStrengthIndex {
 
 impl RelativeStrengthIndex {
     /// Creates a new [`RelativeStrengthIndex`] instance.
-    pub fn new(period: usize, ma_type: Option<MovingAverageType>) -> anyhow::Result<Self> {
-        Ok(Self {
+    #[must_use]
+    pub fn new(period: usize, ma_type: Option<MovingAverageType>) -> Self {
+        Self {
             period,
             ma_type: ma_type.unwrap_or(MovingAverageType::Exponential),
             value: 0.0,
@@ -100,7 +101,7 @@ impl RelativeStrengthIndex {
             average_loss: MovingAverageFactory::create(MovingAverageType::Exponential, period),
             rsi_max: 1.0,
             initialized: false,
-        })
+        }
     }
 
     pub fn update_raw(&mut self, value: f64) {
@@ -224,15 +225,15 @@ mod tests {
     }
 
     #[rstest]
-    fn test_handle_quote_tick(mut rsi_10: RelativeStrengthIndex, quote_tick: QuoteTick) {
-        rsi_10.handle_quote_tick(&quote_tick);
+    fn test_handle_quote_tick(mut rsi_10: RelativeStrengthIndex, stub_quote: QuoteTick) {
+        rsi_10.handle_quote(&stub_quote);
         assert_eq!(rsi_10.count, 1);
         assert_eq!(rsi_10.value, 1.0);
     }
 
     #[rstest]
-    fn test_handle_trade_tick(mut rsi_10: RelativeStrengthIndex, trade_tick: TradeTick) {
-        rsi_10.handle_trade_tick(&trade_tick);
+    fn test_handle_trade_tick(mut rsi_10: RelativeStrengthIndex, stub_trade: TradeTick) {
+        rsi_10.handle_trade(&stub_trade);
         assert_eq!(rsi_10.count, 1);
         assert_eq!(rsi_10.value, 1.0);
     }

@@ -89,7 +89,7 @@ class TestIdStubs:
         from nautilus_trader.adapters.betfair.parsing.common import betfair_instrument_id
 
         return betfair_instrument_id(
-            market_id="1.179082386",
+            market_id="1-179082386",
             selection_id=50214,
             selection_handicap=None,
         )
@@ -113,3 +113,15 @@ class TestIdStubs:
     @staticmethod
     def trade_id() -> TradeId:
         return TradeId("1")
+
+    @staticmethod
+    def position_id_long() -> PositionId:
+        return PositionId("001-LONG")
+
+    @staticmethod
+    def position_id_short() -> PositionId:
+        return PositionId("001-SHORT")
+
+    @staticmethod
+    def position_id_both() -> PositionId:
+        return PositionId("001-BOTH")

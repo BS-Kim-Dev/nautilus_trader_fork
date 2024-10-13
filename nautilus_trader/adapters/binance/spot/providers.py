@@ -48,7 +48,7 @@ from nautilus_trader.model.objects import Quantity
 
 class BinanceSpotInstrumentProvider(InstrumentProvider):
     """
-    Provides a means of loading instruments from the `Binance Spot/Margin` exchange.
+    Provides a means of loading instruments from the Binance Spot/Margin exchange.
 
     Parameters
     ----------
@@ -73,7 +73,7 @@ class BinanceSpotInstrumentProvider(InstrumentProvider):
         is_testnet: bool = False,
         config: InstrumentProviderConfig | None = None,
         venue: Venue = BINANCE_VENUE,
-    ):
+    ) -> None:
         super().__init__(config=config)
 
         self._clock = clock

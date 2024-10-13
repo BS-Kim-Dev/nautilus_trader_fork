@@ -71,12 +71,12 @@ impl Indicator for MovingAverageConvergenceDivergence {
         self.initialized
     }
 
-    fn handle_quote_tick(&mut self, quote: &QuoteTick) {
+    fn handle_quote(&mut self, quote: &QuoteTick) {
         self.update_raw(quote.extract_price(self.price_type).into());
     }
 
-    fn handle_trade_tick(&mut self, tick: &TradeTick) {
-        self.update_raw((&tick.price).into());
+    fn handle_trade(&mut self, trade: &TradeTick) {
+        self.update_raw((&trade.price).into());
     }
 
     fn handle_bar(&mut self, bar: &Bar) {
@@ -94,13 +94,14 @@ impl Indicator for MovingAverageConvergenceDivergence {
 
 impl MovingAverageConvergenceDivergence {
     /// Creates a new [`MovingAverageConvergenceDivergence`] instance.
+    #[must_use]
     pub fn new(
         fast_period: usize,
         slow_period: usize,
         ma_type: Option<MovingAverageType>,
         price_type: Option<PriceType>,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             fast_period,
             slow_period,
             ma_type: ma_type.unwrap_or(MovingAverageType::Simple),
@@ -117,7 +118,7 @@ impl MovingAverageConvergenceDivergence {
                 ma_type.unwrap_or(MovingAverageType::Simple),
                 slow_period,
             ),
-        })
+        }
     }
 }
 
@@ -215,18 +216,18 @@ mod tests {
     #[rstest]
     fn test_handle_quote_tick(
         mut macd_10: MovingAverageConvergenceDivergence,
-        quote_tick: QuoteTick,
+        stub_quote: QuoteTick,
     ) {
-        macd_10.handle_quote_tick(&quote_tick);
+        macd_10.handle_quote(&stub_quote);
         assert_eq!(macd_10.value, 0.0);
     }
 
     #[rstest]
     fn test_handle_trade_tick(
         mut macd_10: MovingAverageConvergenceDivergence,
-        trade_tick: TradeTick,
+        stub_trade: TradeTick,
     ) {
-        macd_10.handle_trade_tick(&trade_tick);
+        macd_10.handle_trade(&stub_trade);
         assert_eq!(macd_10.value, 0.0);
     }
 

@@ -13,7 +13,7 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-use std::{fs, i128, str::FromStr};
+use std::{fs, i128, path::PathBuf, str::FromStr};
 
 use databento::{dbn, live::Subscription};
 use indexmap::IndexMap;
@@ -24,7 +24,6 @@ use nautilus_model::{
 };
 use pyo3::prelude::*;
 use time::OffsetDateTime;
-use tokio::sync::mpsc;
 
 use crate::databento::{
     live::{DatabentoFeedHandler, LiveCommand, LiveMessage},
@@ -41,12 +40,10 @@ pub struct DatabentoLiveClient {
     pub key: String,
     #[pyo3(get)]
     pub dataset: String,
-    #[pyo3(get)]
-    pub is_running: bool,
-    #[pyo3(get)]
-    pub is_closed: bool,
-    cmd_tx: mpsc::UnboundedSender<LiveCommand>,
-    cmd_rx: Option<mpsc::UnboundedReceiver<LiveCommand>>,
+    is_running: bool,
+    is_closed: bool,
+    cmd_tx: tokio::sync::mpsc::UnboundedSender<LiveCommand>,
+    cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<LiveCommand>>,
     buffer_size: usize,
     publisher_venue_map: IndexMap<u16, Venue>,
 }
@@ -58,14 +55,14 @@ impl DatabentoLiveClient {
     }
 
     async fn process_messages(
-        mut msg_rx: mpsc::Receiver<LiveMessage>,
+        mut msg_rx: tokio::sync::mpsc::Receiver<LiveMessage>,
         callback: PyObject,
         callback_pyo3: PyObject,
     ) -> PyResult<()> {
         tracing::debug!("Processing messages...");
         // Continue to process messages until channel is hung up
         while let Some(msg) = msg_rx.recv().await {
-            tracing::trace!("Received message: {:?}", msg);
+            tracing::trace!("Received message: {msg:?}");
             let result = match msg {
                 LiveMessage::Data(data) => Python::with_gil(|py| {
                     let py_obj = data_to_pycapsule(py, data);
@@ -73,7 +70,7 @@ impl DatabentoLiveClient {
                 }),
                 LiveMessage::Instrument(data) => Python::with_gil(|py| {
                     let py_obj =
-                        instrument_any_to_pyobject(py, data).expect("Error creating instrument");
+                        instrument_any_to_pyobject(py, data).expect("Failed creating instrument");
                     call_python(py, &callback, py_obj)
                 }),
                 LiveMessage::Status(data) => Python::with_gil(|py| {
@@ -95,6 +92,9 @@ impl DatabentoLiveClient {
                 LiveMessage::Error(e) => {
                     // Return error to Python
                     return Err(to_pyruntime_err(e));
+                }
+                _ => {
+                    panic!("Message did not match any case: {msg:?}");
                 }
             };
 
@@ -123,8 +123,8 @@ fn call_python(py: Python, callback: &PyObject, py_obj: PyObject) -> PyResult<()
 #[pymethods]
 impl DatabentoLiveClient {
     #[new]
-    pub fn py_new(key: String, dataset: String, publishers_path: String) -> PyResult<Self> {
-        let publishers_json = fs::read_to_string(publishers_path)?;
+    pub fn py_new(key: String, dataset: String, publishers_filepath: PathBuf) -> PyResult<Self> {
+        let publishers_json = fs::read_to_string(publishers_filepath)?;
         let publishers_vec: Vec<DatabentoPublisher> =
             serde_json::from_str(&publishers_json).map_err(to_pyvalue_err)?;
         let publisher_venue_map = publishers_vec
@@ -132,7 +132,7 @@ impl DatabentoLiveClient {
             .map(|p| (p.publisher_id, Venue::from(p.venue.as_str())))
             .collect::<IndexMap<u16, Venue>>();
 
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<LiveCommand>();
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<LiveCommand>();
 
         // Hard coded to a reasonable size for now
         let buffer_size = 100_000;
@@ -147,6 +147,16 @@ impl DatabentoLiveClient {
             is_closed: false,
             publisher_venue_map,
         })
+    }
+
+    #[pyo3(name = "is_running")]
+    fn py_is_running(&self) -> bool {
+        self.is_running
+    }
+
+    #[pyo3(name = "is_closed")]
+    fn py_is_closed(&self) -> bool {
+        self.is_closed
     }
 
     #[pyo3(name = "subscribe")]
@@ -194,7 +204,7 @@ impl DatabentoLiveClient {
 
         self.is_running = true;
 
-        let (msg_tx, msg_rx) = mpsc::channel::<LiveMessage>(self.buffer_size);
+        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel::<LiveMessage>(self.buffer_size);
 
         // Consume the receiver
         // SAFETY: We guard the client from being started more than once with the

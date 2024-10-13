@@ -90,17 +90,17 @@ cdef extern from "../includes/common.h":
 
     # The log level for log messages.
     cpdef enum LogLevel:
-        # A level lower than all other log levels (off).
+        # The **OFF** log level. A level lower than all other log levels (off).
         OFF # = 0,
-        # The **TRACE** trace log level. Only available in Rust for debug/development builds.
+        # The **TRACE** log level. Only available in Rust for debug/development builds.
         TRACE # = 1,
-        # The **DEBUG** debug log level.
+        # The **DEBUG** log level.
         DEBUG # = 2,
-        # The **INFO** info log level.
+        # The **INFO** log level.
         INFO # = 3,
-        # The **WARNING** warning log level.
+        # The **WARNING** log level.
         WARNING # = 4,
-        # The **ERROR** error log level.
+        # The **ERROR** log level.
         ERROR # = 5,
 
     # A real-time clock which uses system time.
@@ -153,17 +153,25 @@ cdef extern from "../includes/common.h":
         LogGuard *_0;
 
     # Represents a time event occurring at the event timestamp.
+    #
+    # A `TimeEvent` carries metadata such as the event's name, a unique event ID,
+    # and timestamps indicating when the event was scheduled to occur and when it was initialized.
     cdef struct TimeEvent_t:
-        # The event name.
+        # The event name, identifying the nature or purpose of the event.
         char* name;
-        # The event ID.
+        # The unique identifier for the event.
         UUID4_t event_id;
-        # The message category
+        # UNIX timestamp (nanoseconds) when the event occurred.
         uint64_t ts_event;
-        # UNIX timestamp (nanoseconds) when the object was initialized.
+        # UNIX timestamp (nanoseconds) when the instance was initialized.
         uint64_t ts_init;
 
-    # Represents a time event and its associated handler.
+    # Legacy time event handler for Cython/FFI inter-operatbility
+    #
+    # TODO: Remove once Cython is deprecated
+    #
+    # `TimeEventHandler` associates a `TimeEvent` with a callback function that is triggered
+    # when the event's timestamp is reached.
     cdef struct TimeEventHandler_t:
         # The time event.
         TimeEvent_t event;
@@ -188,7 +196,7 @@ cdef extern from "../includes/common.h":
     # Sets the global logging clock to static mode.
     void logging_clock_set_static_mode();
 
-    # Sets the global logging clock static time with the given UNIX time (nanoseconds).
+    # Sets the global logging clock static time with the given UNIX timestamp (nanoseconds).
     void logging_clock_set_static_time(uint64_t time_ns);
 
     TestClock_API test_clock_new();
@@ -281,8 +289,9 @@ cdef extern from "../includes/common.h":
     #
     # # Panics
     #
-    # - Panics if `name` is not a valid string.
-    # - Panics if `callback_ptr` is NULL and no default callback has been assigned on the clock.
+    # This function panics:
+    # - If `name` is not a valid string.
+    # - If `callback_ptr` is NULL and no default callback has been assigned on the clock.
     void live_clock_set_time_alert(LiveClock_API *clock,
                                    const char *name_ptr,
                                    uint64_t alert_time_ns,
@@ -295,8 +304,9 @@ cdef extern from "../includes/common.h":
     #
     # # Panics
     #
-    # - Panics if `name` is not a valid string.
-    # - Panics if `callback_ptr` is NULL and no default callback has been assigned on the clock.
+    # This function panics:
+    # - If `name` is not a valid string.
+    # - If `callback_ptr` is NULL and no default callback has been assigned on the clock.
     void live_clock_set_timer(LiveClock_API *clock,
                               const char *name_ptr,
                               uint64_t interval_ns,

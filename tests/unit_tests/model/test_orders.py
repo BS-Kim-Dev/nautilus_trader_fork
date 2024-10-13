@@ -380,6 +380,7 @@ class TestOrders:
             AUDUSD_SIM.id,
             OrderSide.BUY,
             Quantity.from_int(100_000),
+            tags=["tag-01", "tag-02", "tag-03"],
         )
 
         # Act
@@ -417,7 +418,7 @@ class TestOrders:
             "exec_algorithm_id": None,
             "exec_algorithm_params": None,
             "exec_spawn_id": None,
-            "tags": None,
+            "tags": ["tag-01", "tag-02", "tag-03"],
             "ts_init": 0,
             "ts_last": 0,
         }
@@ -1517,8 +1518,8 @@ class TestOrders:
             sl_trigger_price=Price.from_str("0.99990"),
             tp_price=Price.from_str("1.00010"),
             entry_tags=["ENTRY"],
-            tp_tags=["TAKE_PROFIT"],
             sl_tags=["STOP_LOSS"],
+            tp_tags=["TAKE_PROFIT"],
         )
 
         # Assert

@@ -27,8 +27,8 @@ impl AverageTrueRange {
         ma_type: Option<MovingAverageType>,
         use_previous: Option<bool>,
         value_floor: Option<f64>,
-    ) -> PyResult<Self> {
-        Self::new(period, ma_type, use_previous, value_floor).map_err(to_pyvalue_err)
+    ) -> Self {
+        Self::new(period, ma_type, use_previous, value_floor)
     }
 
     fn __repr__(&self) -> String {
@@ -80,12 +80,12 @@ impl AverageTrueRange {
     }
 
     #[pyo3(name = "handle_quote_tick")]
-    fn py_handle_quote_tick(&mut self, _tick: &QuoteTick) {
+    fn py_handle_quote_tick(&mut self, _quote: &QuoteTick) {
         // Function body intentionally left blank.
     }
 
     #[pyo3(name = "handle_trade_tick")]
-    fn py_handle_trade_tick(&mut self, _tick: &TradeTick) {
+    fn py_handle_trade_tick(&mut self, _trade: &TradeTick) {
         // Function body intentionally left blank.
     }
 

@@ -223,15 +223,18 @@ class TestDataStubs:
         )
 
     @staticmethod
-    def instrument_close() -> InstrumentClose:
-        from nautilus_trader.adapters.betfair.constants import BETFAIR_PRICE_PRECISION
-
+    def instrument_close(
+        instrument_id: InstrumentId | None = None,
+        price: Price | None = None,
+        close_type: InstrumentCloseType | None = None,
+        ts_event: int = 0,
+    ) -> InstrumentClose:
         return InstrumentClose(
-            TestIdStubs.betting_instrument_id(),
-            Price(1.0, BETFAIR_PRICE_PRECISION),
-            InstrumentCloseType.CONTRACT_EXPIRED,
-            0,
-            0,
+            instrument_id or TestIdStubs.betting_instrument_id(),
+            price or Price(1.0, 2),
+            close_type or InstrumentCloseType.CONTRACT_EXPIRED,
+            ts_event,
+            ts_event,
         )
 
     @staticmethod
@@ -355,6 +358,7 @@ class TestDataStubs:
         sequence: int = 0,
         ts_event: int = 0,
         ts_init: int = 0,
+        levels: int = 10,
     ) -> OrderBookDepth10:
         bids: list[BookOrder] = []
         asks: list[BookOrder] = []
@@ -364,7 +368,7 @@ class TestDataStubs:
         quantity = 100.0
         order_id = 1
 
-        for _ in range(10):
+        for _ in range(levels):
             order = BookOrder(
                 OrderSide.BUY,
                 Price(price, 2),
@@ -383,7 +387,7 @@ class TestDataStubs:
         quantity = 100.0
         order_id = 11
 
-        for _ in range(10):
+        for _ in range(levels):
             order = BookOrder(
                 OrderSide.SELL,
                 Price(price, 2),
@@ -397,8 +401,8 @@ class TestDataStubs:
             quantity += 100.0
             order_id += 1
 
-        bid_counts = [1] * 10
-        ask_counts = [1] * 10
+        bid_counts = [1] * levels
+        ask_counts = [1] * levels
 
         return OrderBookDepth10(
             instrument_id=instrument_id or TestIdStubs.aapl_xnas_id(),

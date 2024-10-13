@@ -32,6 +32,7 @@ use crate::{
     types::{currency::Currency, money::Money, price::Price, quantity::Quantity},
 };
 
+/// Represents a generic options contract instrument.
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(
@@ -47,9 +48,9 @@ pub struct OptionsContract {
     pub exchange: Option<Ustr>,
     pub underlying: Ustr,
     pub option_kind: OptionKind,
+    pub strike_price: Price,
     pub activation_ns: UnixNanos,
     pub expiration_ns: UnixNanos,
-    pub strike_price: Price,
     pub currency: Currency,
     pub price_precision: u8,
     pub price_increment: Price,
@@ -68,19 +69,23 @@ pub struct OptionsContract {
 }
 
 impl OptionsContract {
-    /// Creates a new [`OptionsContract`] instance.
+    /// Creates a new [`OptionsContract`] instance with correctness checking.
+    ///
+    /// # Notes
+    ///
+    /// PyO3 requires a `Result` type for proper error handling and stacktrace printing in Python.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_checked(
         id: InstrumentId,
         raw_symbol: Symbol,
         asset_class: AssetClass,
         exchange: Option<Ustr>,
         underlying: Ustr,
         option_kind: OptionKind,
-        activation_ns: UnixNanos,
-        expiration_ns: UnixNanos,
         strike_price: Price,
         currency: Currency,
+        activation_ns: UnixNanos,
+        expiration_ns: UnixNanos,
         price_precision: u8,
         price_increment: Price,
         multiplier: Quantity,
@@ -93,19 +98,18 @@ impl OptionsContract {
         margin_maint: Option<Decimal>,
         ts_event: UnixNanos,
         ts_init: UnixNanos,
-    ) -> Self {
-        check_valid_string_optional(exchange.map(|u| u.as_str()), stringify!(isin)).expect(FAILED);
-        check_valid_string(underlying.as_str(), stringify!(underlying)).expect(FAILED);
+    ) -> anyhow::Result<Self> {
+        check_valid_string_optional(exchange.map(|u| u.as_str()), stringify!(isin))?;
+        check_valid_string(underlying.as_str(), stringify!(underlying))?;
         check_equal_u8(
             price_precision,
             price_increment.precision,
             stringify!(price_precision),
             stringify!(price_increment.precision),
-        )
-        .expect(FAILED);
-        check_positive_i64(price_increment.raw, stringify!(price_increment.raw)).expect(FAILED);
+        )?;
+        check_positive_i64(price_increment.raw, stringify!(price_increment.raw))?;
 
-        Self {
+        Ok(Self {
             id,
             raw_symbol,
             asset_class,
@@ -130,7 +134,60 @@ impl OptionsContract {
             margin_maint: margin_maint.unwrap_or(0.into()),
             ts_event,
             ts_init,
-        }
+        })
+    }
+
+    /// Creates a new [`OptionsContract`] instance.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: InstrumentId,
+        raw_symbol: Symbol,
+        asset_class: AssetClass,
+        exchange: Option<Ustr>,
+        underlying: Ustr,
+        option_kind: OptionKind,
+        strike_price: Price,
+        currency: Currency,
+        activation_ns: UnixNanos,
+        expiration_ns: UnixNanos,
+        price_precision: u8,
+        price_increment: Price,
+        multiplier: Quantity,
+        lot_size: Quantity,
+        max_quantity: Option<Quantity>,
+        min_quantity: Option<Quantity>,
+        max_price: Option<Price>,
+        min_price: Option<Price>,
+        margin_init: Option<Decimal>,
+        margin_maint: Option<Decimal>,
+        ts_event: UnixNanos,
+        ts_init: UnixNanos,
+    ) -> Self {
+        Self::new_checked(
+            id,
+            raw_symbol,
+            asset_class,
+            exchange,
+            underlying,
+            option_kind,
+            strike_price,
+            currency,
+            activation_ns,
+            expiration_ns,
+            price_precision,
+            price_increment,
+            multiplier,
+            lot_size,
+            max_quantity,
+            min_quantity,
+            max_price,
+            min_price,
+            margin_init,
+            margin_maint,
+            ts_event,
+            ts_init,
+        )
+        .expect(FAILED)
     }
 }
 

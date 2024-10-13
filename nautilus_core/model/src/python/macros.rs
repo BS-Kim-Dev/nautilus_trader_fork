@@ -21,8 +21,8 @@ macro_rules! identifier_for_python {
         #[pymethods]
         impl $ty {
             #[new]
-            fn py_new(value: &str) -> Self {
-                <$ty>::new(value)
+            fn py_new(value: &str) -> PyResult<Self> {
+                <$ty>::new_checked(value).map_err(to_pyvalue_err)
             }
 
             fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
